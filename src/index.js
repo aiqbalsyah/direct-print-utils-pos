@@ -328,28 +328,87 @@ function printWithSystemPrinter(cmds, printerName, callback) {
     const tempFile = path.join(os.tmpdir(), `print_${Date.now()}.txt`);
     
     fs.writeFileSync(tempFile, cmds);
+    console.log(`Created temp file: ${tempFile}`);
+    console.log(`File content preview: ${cmds.substring(0, 100)}...`);
     
     let printCommand;
     if (os.platform() === 'win32') {
-      printCommand = `print /D:"${printerName}" "${tempFile}"`;
+      // Try multiple Windows printing methods for better compatibility
+      console.log(`Attempting to print to Windows printer: ${printerName}`);
+      
+      // Method 1: PowerShell (recommended for modern Windows)
+      printCommand = `powershell -Command "Get-Content '${tempFile}' | Out-Printer -Name '${printerName}'"`;
+      
+      exec(printCommand, (error, stdout, stderr) => {
+        if (!error) {
+          console.log('✅ PowerShell print successful');
+          try { fs.unlinkSync(tempFile); } catch(e) {}
+          res.message = `BERHASIL MENCETAK DATA (${printerName})`;
+          res.status = 200;
+          return callback(res);
+        }
+        
+        console.log('⚠️ PowerShell print failed, trying notepad method:', error.message);
+        
+        // Method 2: Notepad print (fallback)
+        const notepadCommand = `start /wait notepad /p "${tempFile}"`;
+        exec(notepadCommand, (notepadError, notepadStdout, notepadStderr) => {
+          if (!notepadError) {
+            console.log('✅ Notepad print method initiated');
+            setTimeout(() => {
+              try { fs.unlinkSync(tempFile); } catch(e) {}
+            }, 3000); // Wait longer for notepad to finish
+            res.message = `BERHASIL MENCETAK DATA (${printerName}) - Notepad Method`;
+            res.status = 200;
+            return callback(res);
+          }
+          
+          console.log('⚠️ Notepad print failed, trying print command:', notepadError.message);
+          
+          // Method 3: Traditional print command (final fallback)
+          const printCmd = `print /D:"${printerName}" "${tempFile}"`;
+          exec(printCmd, (printError, printStdout, printStderr) => {
+            try { fs.unlinkSync(tempFile); } catch(e) {}
+            
+            if (printError) {
+              console.error('❌ All Windows print methods failed. Error details:', {
+                printerName,
+                powershellError: error.message,
+                notepadError: notepadError.message,
+                printError: printError.message
+              });
+              res.message = `ERROR: Could not print to ${printerName}. Please check if printer is available and online.`;
+              res.status = 500;
+            } else {
+              console.log('✅ Traditional print command successful');
+              res.message = `BERHASIL MENCETAK DATA (${printerName}) - Print Command`;
+              res.status = 200;
+            }
+            return callback(res);
+          });
+        });
+      });
+      
     } else {
+      // Unix-like systems
       printCommand = `lp -d "${printerName}" "${tempFile}"`;
+      
+      exec(printCommand, (error, stdout, stderr) => {
+        try { fs.unlinkSync(tempFile); } catch(e) {}
+        
+        if (error) {
+          console.error('Unix print error:', error);
+          res.message = `ERROR PRINTING TO ${printerName}: ${error.message}`;
+          res.status = 500;
+        } else {
+          console.log('Unix print successful');
+          res.message = `BERHASIL MENCETAK DATA (${printerName})`;
+          res.status = 200;
+        }
+        return callback(res);
+      });
     }
     
-    exec(printCommand, (error, stdout, stderr) => {
-      // Clean up temp file
-      try { fs.unlinkSync(tempFile); } catch(e) {}
-      
-      if (error) {
-        console.error('System print error:', error);
-        res.message = `ERROR PRINTING TO ${printerName}: ${error.message}`;
-        res.status = 500;
-      } else {
-        res.message = `BERHASIL MENCETAK DATA (${printerName})`;
-        res.status = 200;
-      }
-      return callback(res);
-    });
   } catch (e) {
     console.error(`ERROR SYSTEM PRINTER: ${e}`);
     res.message = `ERROR SYSTEM PRINTER: ${e.message}`;
@@ -647,38 +706,110 @@ app.get('/', (req, res) => {
 })
 
 io.on('connection', (socket) => {
-  console.log('a user connected');
+  console.log('✅ WebSocket user connected:', socket.id);
+  
+  // Handle connection errors
+  socket.on('error', (error) => {
+    console.error('❌ Socket error:', error);
+  });
+  
+  socket.on('disconnect', (reason) => {
+    console.log('🔌 User disconnected:', socket.id, 'Reason:', reason);
+  });
   
   socket.on('print', (data) => {
-    console.log('Print request received:', data);
+    console.log('🖨️ Print request received from:', socket.id, data);
     
-    // Extract printer type and data from frontend request
-    let printerType = data.printerType || 'auto'; // Default to auto-detection
-    
-    // Convert "UMUM" to "auto" for auto-detection
-    if (printerType.toUpperCase() === 'UMUM') {
-      printerType = 'auto';
-      console.log('UMUM printer type detected, using auto-detection');
-    }
-    
-    const dataPrint = data.dataPrint;
-    
-    if (!dataPrint) {
-      socket.emit('print-response', {
-        message: 'NO DATA TO PRINT',
-        status: 400
+    try {
+      // Extract printer type and data from frontend request
+      let printerType = data.printerType || 'auto'; // Default to auto-detection
+      
+      // Convert "UMUM" to "auto" for auto-detection
+      if (printerType.toUpperCase() === 'UMUM') {
+        printerType = 'auto';
+        console.log('🔄 UMUM printer type detected, using auto-detection');
+      }
+      
+      const dataPrint = data.dataPrint;
+      
+      if (!dataPrint) {
+        console.log('❌ No data to print');
+        socket.emit('print-response', {
+          message: 'NO DATA TO PRINT',
+          status: 400
+        });
+        return;
+      }
+      
+      console.log('🚀 Starting print process...');
+      
+      // Use the enhanced printSend function with printer type preference
+      printSendWithType(dataPrint, printerType, (result) => {
+        try {
+          console.log('📄 Print result:', result);
+          
+          // Check if socket is still connected before emitting
+          if (socket.connected) {
+            socket.emit('print-response', result);
+            console.log('✅ Print response sent to client');
+          } else {
+            console.log('⚠️ Socket disconnected, cannot send response');
+          }
+        } catch (emitError) {
+          console.error('❌ Error sending print response:', emitError);
+        }
       });
-      return;
+      
+    } catch (printError) {
+      console.error('❌ Error in print handler:', printError);
+      
+      // Send error response if socket is still connected
+      if (socket.connected) {
+        socket.emit('print-response', {
+          message: `PRINT ERROR: ${printError.message}`,
+          status: 500
+        });
+      }
     }
-    
-    // Use the enhanced printSend function with printer type preference
-    printSendWithType(dataPrint, printerType, (result) => {
-      console.log('Print result:', result);
-      socket.emit('print-response', result);
-    });
+  });
+  
+  // Add ping/pong to keep connection alive
+  socket.on('ping', () => {
+    console.log('🏓 Ping received from:', socket.id);
+    socket.emit('pong');
   });
 });
 
 server.listen(4000, () => {
-  console.log('server running at http://localhost:4000');
+  console.log('✅ Direct Print Server running on http://localhost:4000');
+  console.log('🖨️ Auto printer detection enabled');
+  console.log('🌐 WebSocket server ready for connections');
+});
+
+// Handle uncaught exceptions to prevent server crashes
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  console.log('🔄 Server continuing to run...');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  console.log('🔄 Server continuing to run...');
+});
+
+// Graceful shutdown handling
+process.on('SIGINT', () => {
+  console.log('🛑 Server shutting down gracefully...');
+  server.close(() => {
+    console.log('✅ Server stopped');
+    process.exit(0);
+  });
+});
+
+process.on('SIGTERM', () => {
+  console.log('🛑 Server terminating...');
+  server.close(() => {
+    console.log('✅ Server stopped');
+    process.exit(0);
+  });
 });
