@@ -51,17 +51,17 @@ jobs:
                   $packageContent | Out-File -FilePath "package-msi.json" -Encoding utf8
               shell: pwsh
 
-            - name: Install dependencies
+            - name: Install dependencies and build tool
               run: |
                   copy package-msi.json package.json
                   npm install
-                  npm install -g pkg
+                  npm install pkg --save-dev
               shell: cmd
 
             - name: Build executable
               run: |
                   echo "Building executable..."
-                  pkg . --targets node18-win-x64 --output ./build/DirectPrintServer.exe
+                  npx pkg . --targets node18-win-x64 --output ./build/DirectPrintServer.exe
               shell: cmd
 
             - name: Create installation structure
