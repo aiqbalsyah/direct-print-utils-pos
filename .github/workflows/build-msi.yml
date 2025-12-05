@@ -53,8 +53,8 @@ jobs:
                   REM Copy built files from dist folder
                   xcopy /E /I /Y dist installer\bin\
 
-                  REM Copy Windows-specific scripts for WiX
-                  xcopy /E /I /Y scripts\windows\wix installer\scripts\
+                  REM Copy all Windows scripts for installer
+                  xcopy /E /I /Y scripts\windows installer\scripts\
 
                   echo "✅ MSI structure prepared successfully"
               shell: cmd
@@ -83,12 +83,33 @@ jobs:
                       
                       <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
                         <Component Id="MainExecutable" Guid="11111111-1111-1111-1111-111111111111">
-                          <File Id="DirectPrintExe" Source="installer\bin\direct-print-win.exe" KeyPath="yes" />
+                          <File Id="DirectPrintServerEXE" Source="installer\bin\DirectPrintServer.exe" KeyPath="yes" />
+                          <ServiceInstall Id="DirectPrintService"
+                                         Type="ownProcess"
+                                         Name="DirectPrintService"
+                                         DisplayName="Direct Print Server"
+                                         Description="Automatic printer service for direct printing"
+                                         Start="auto"
+                                         Account="LocalSystem"
+                                         ErrorControl="normal" />
+                          <ServiceControl Id="StartDirectPrintService" Start="install" Stop="both" Remove="uninstall" Name="DirectPrintService" Wait="yes" />
                         </Component>
-                        <Component Id="StartupScripts" Guid="22222222-2222-2222-2222-222222222222">
-                          <File Id="StartupBat" Source="installer\bin\startup.bat" />
-                          <File Id="InstallStartupBat" Source="installer\bin\install-startup.bat" />
-                          <File Id="UninstallStartupBat" Source="installer\bin\uninstall-startup.bat" />
+                        
+                        <Component Id="ServiceScripts" Guid="22222222-2222-2222-2222-222222222222">
+                          <File Id="InstallServiceJS" Source="installer\scripts\service\install-service.js" />
+                          <File Id="UninstallServiceJS" Source="installer\scripts\service\uninstall-service.js" />
+                        </Component>
+                        
+                        <Component Id="StartupScripts" Guid="33333333-3333-3333-3333-333333333333">
+                          <File Id="StartupBat" Source="installer\scripts\startup\startup.bat" />
+                          <File Id="InstallStartupBat" Source="installer\scripts\startup\install-startup.bat" />
+                          <File Id="UninstallStartupBat" Source="installer\scripts\startup\uninstall-startup.bat" />
+                        </Component>
+                        
+                        <Component Id="WixScripts" Guid="44444444-4444-4444-4444-444444444444">
+                          <File Id="PreInstallBat" Source="installer\scripts\wix\pre-install.bat" />
+                          <File Id="PostInstallBat" Source="installer\scripts\wix\post-install.bat" />
+                          <File Id="PreUninstallBat" Source="installer\scripts\wix\pre-uninstall.bat" />
                           <RemoveFolder Id="INSTALLFOLDER" Directory="INSTALLFOLDER" On="uninstall" />
                           <RegistryValue Root="HKCU" Key="SOFTWARE\DirectPrintServer" Name="installed" Type="integer" Value="1" KeyPath="yes" />
                         </Component>
@@ -146,7 +167,10 @@ jobs:
               run: |
                   mkdir release
                   copy DirectPrintServer.msi release\
-                  copy installer\scripts\*.bat release\
+
+                  echo "Copying organized scripts..."
+                  xcopy /E /I /Y installer\scripts release\scripts\
+
                   echo Direct Print Server Windows Installer > release\README.txt
                   echo. >> release\README.txt
                   echo Installation Instructions: >> release\README.txt
@@ -175,7 +199,7 @@ jobs:
               with:
                   files: |
                       DirectPrintServer.msi
-                      release/*.bat
+                      release/scripts/**/*
                   name: Direct Print Server v${{ github.ref_name || github.run_number }}
                   tag_name: ${{ github.ref_name || format('msi-v{0}', github.run_number) }}
                   body: |
