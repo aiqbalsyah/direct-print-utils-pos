@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Direct Print Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .section { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        button { background: #007cba; color: white; padding: 10px 15px; border: none; border-radius: 3px; cursor: pointer; margin: 5px; }
+        button:hover { background: #005a87; }
+        .success { color: green; background: #e8f5e8; padding: 10px; border-radius: 3px; }
+        .error { color: red; background: #ffe8e8; padding: 10px; border-radius: 3px; }
+        .log { background: #f0f0f0; padding: 10px; font-family: monospace; white-space: pre-wrap; max-height: 200px; overflow-y: auto; border: 1px solid #ccc; }
+        select, input { padding: 8px; margin: 5px; border: 1px solid #ccc; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🖨️ Direct Print Test & Debug</h1>
+        
+        <div class="section">
+            <h2>📋 Printer Status</h2>
+            <button onclick="checkPrinters()">Refresh Printers</button>
+            <button onclick="checkStatus()">Check Status</button>
+            <div id="printerStatus"></div>
+        </div>
+        
+        <div class="section">
+            <h2>🧪 Test Print</h2>
+            <label>Select Printer:</label>
+            <select id="printerSelect">
+                <option value="auto">Auto Detect</option>
+            </select><br>
+            <button onclick="testPrint()">Test Print Simple</button>
+            <button onclick="testPrintReceipt()">Test Receipt Print</button>
+            <button onclick="testEscPosClean()">Test ESC/POS Cleaning</button>
+            <div id="testResult"></div>
+        </div>
+        
+        <div class="section">
+            <h2>💻 Console Log</h2>
+            <button onclick="clearLog()">Clear Log</button>
+            <div id="consoleLog" class="log"></div>
+        </div>
+        
+        <div class="section">
+            <h2>🔧 Manual Print Test</h2>
+            <textarea id="customText" rows="10" cols="50" placeholder="Enter text to print...">
+=============================
+        MANUAL TEST         
+=============================
+Date: ${new Date().toLocaleString()}
+This is a manual test print
+Line 1: Testing
+Line 2: 123456789
+Line 3: Special chars !@#$%
+=============================
+End test
+=============================
+            </textarea><br>
+            <button onclick="printCustom()">Print Custom Text</button>
+            <div id="customResult"></div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let printers = [];
+
+        function log(message) {
+            const logDiv = document.getElementById('consoleLog');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.textContent += `[${timestamp}] ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('consoleLog').textContent = '';
+        }
+
+        // Socket event listeners
+        socket.on('connect', () => {
+            log('✅ Connected to server');
+            checkPrinters();
+        });
+
+        socket.on('disconnect', () => {
+            log('❌ Disconnected from server');
+        });
+
+        socket.on('print-response', (response) => {
+            log(`Print response: ${JSON.stringify(response)}`);
+        });
+
+        // Check available printers
+        async function checkPrinters() {
+            try {
+                log('🔍 Checking printers...');
+                const response = await fetch('/printers');
+                const data = await response.json();
+                
+                printers = data.printers || [];
+                const select = document.getElementById('printerSelect');
+                select.innerHTML = '<option value="auto">Auto Detect</option>';
+                
+                printers.forEach(printer => {
+                    const option = document.createElement('option');
+                    option.value = printer;
+                    option.textContent = printer;
+                    if (printer === data.defaultPrinter) {
+                        option.textContent += ' (Default)';
+                    }
+                    select.appendChild(option);
+                });
+
+                document.getElementById('printerStatus').innerHTML = `
+                    <div class="success">
+                        <strong>Found ${printers.length} printer(s):</strong><br>
+                        ${printers.join(', ')}<br>
+                        <strong>Default:</strong> ${data.defaultPrinter || 'None'}<br>
+                        <strong>Platform:</strong> ${data.platform}
+                    </div>
+                `;
+                
+                log(`Found printers: ${printers.join(', ')}`);
+            } catch (error) {
+                log(`❌ Error checking printers: ${error.message}`);
+                document.getElementById('printerStatus').innerHTML = `
+                    <div class="error">Error: ${error.message}</div>
+                `;
+            }
+        }
+
+        // Check printer status
+        async function checkStatus() {
+            try {
+                const response = await fetch('/printer-status');
+                const data = await response.json();
+                log(`Printer status: ${JSON.stringify(data)}`);
+            } catch (error) {
+                log(`❌ Error checking status: ${error.message}`);
+            }
+        }
+
+        // Test simple print
+        async function testPrint() {
+            const printer = document.getElementById('printerSelect').value;
+            
+            try {
+                log(`🧪 Testing print to: ${printer}`);
+                const response = await fetch('/test-print', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ printer: printer === 'auto' ? null : printer })
+                });
+                
+                const result = await response.json();
+                
+                document.getElementById('testResult').innerHTML = result.status === 200 
+                    ? `<div class="success">${result.message}</div>`
+                    : `<div class="error">${result.message}</div>`;
+                    
+                log(`Test result: ${JSON.stringify(result)}`);
+            } catch (error) {
+                log(`❌ Test print error: ${error.message}`);
+                document.getElementById('testResult').innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        // Test receipt print via WebSocket
+        function testPrintReceipt() {
+            const printer = document.getElementById('printerSelect').value;
+            
+            const receiptData = `
+=============================
+         RECEIPT TEST        
+=============================
+TRX ID    : TEST123
+DATE      : ${new Date().toLocaleDateString()}
+TIME      : ${new Date().toLocaleTimeString()}
+PRINTER   : ${printer}
+=============================
+ITEM                   QTY  
+Test Product            1   
+Sub Total          : 10.00
+Tax               :  1.00
+Total             : 11.00
+=============================
+      Thank You!        
+=============================
+
+
+`;
+
+            log(`🧪 WebSocket receipt test to: ${printer}`);
+            socket.emit('print', {
+                printerType: printer,
+                dataPrint: receiptData
+            });
+            
+            document.getElementById('testResult').innerHTML = '<div>Receipt test sent via WebSocket...</div>';
+        }
+
+        // Test ESC/POS command cleaning
+        function testEscPosClean() {
+            const printer = document.getElementById('printerSelect').value;
+            
+            // Create test data with ESC/POS commands
+            const escPosData = `\x1B@\x1B!\x00=============================\n\x1B!\x01      ESC/POS TEST      \x1B!\x00\n=============================\nDATE      : ${new Date().toLocaleDateString()}\nTIME      : ${new Date().toLocaleTimeString()}\nPRINTER   : ${printer}\n\x1Ba\x01CENTERED TEXT\x1Ba\x00\n=============================\n\x1B!\x01BOLD ITEM\x1B!\x00                1\nNormal text here\n\x1B!\x08Small text\x1B!\x00\n=============================\n      Thank You!        \n\x1Ba\x02Right aligned\x1Ba\x00\n=============================\n\n\n\x1Bm`;
+
+            log(`🧹 ESC/POS cleaning test to: ${printer}`);
+            log(`📋 Original data length: ${escPosData.length} bytes`);
+            log(`🔍 Raw data preview: ${escPosData.substring(0, 100).replace(/\x1B/g, '\\x1B')}...`);
+            
+            socket.emit('print', {
+                printerType: printer,
+                dataPrint: escPosData
+            });
+            
+            document.getElementById('testResult').innerHTML = '<div class="success">ESC/POS test data sent - check console for cleaning process!</div>';
+        }
+
+        // Print custom text
+        function printCustom() {
+            const printer = document.getElementById('printerSelect').value;
+            const customText = document.getElementById('customText').value;
+            
+            log(`📝 Custom print to: ${printer}`);
+            socket.emit('print', {
+                printerType: printer,
+                dataPrint: customText
+            });
+            
+            document.getElementById('customResult').innerHTML = '<div>Custom text sent for printing...</div>';
+        }
+
+        // Initialize on page load
+        window.onload = () => {
+            log('🚀 Page loaded, connecting...');
+        };
+    </script>
+</body>
+</html>

@@ -317,43 +317,92 @@ function printSendWithType(cmds, printerType, callback) {
   }
 }
 
+// Function to clean ESC/POS commands and convert to plain text
+function cleanEscPosCommands(rawData) {
+  console.log('🧹 Cleaning ESC/POS commands from data...');
+  
+  let cleanText = rawData;
+  
+  // Remove common ESC/POS commands
+  cleanText = cleanText
+    // Remove ESC commands (starts with \x1B)
+    .replace(/\x1B@/g, '')           // Initialize printer
+    .replace(/\x1B!\x00/g, '')       // Normal text
+    .replace(/\x1B!1/g, '')          // Bold text  
+    .replace(/\x1B!\d+/g, '')        // Any text formatting
+    .replace(/\x1Ba\x00/g, '')       // Left align
+    .replace(/\x1Ba\x01/g, '')       // Center align
+    .replace(/\x1Ba\x02/g, '')       // Right align
+    .replace(/\x1Bm/g, '')           // Cut paper
+    .replace(/\x1B[a-zA-Z@]/g, '')   // Other ESC commands
+    
+    // Clean any remaining control characters
+    .replace(/[\x00-\x1F\x7F]/g, (char) => {
+      // Keep only useful control characters
+      if (char === '\n' || char === '\r' || char === '\t') {
+        return char;
+      }
+      return ''; // Remove other control chars
+    })
+    
+    // Fix multiple newlines and clean up spacing
+    .replace(/\n\s*\n\s*\n/g, '\n\n')  // Max 2 consecutive newlines
+    .replace(/[ \t]+$/gm, '')          // Remove trailing spaces
+    .replace(/^[ \t]+/gm, '')          // Remove leading spaces
+    .trim();
+  
+  console.log('✅ ESC/POS commands cleaned');
+  console.log('📋 Original length:', rawData.length, 'Clean length:', cleanText.length);
+  console.log('🔍 Clean text preview:', cleanText.substring(0, 200) + '...');
+  
+  return cleanText;
+}
+
 // Function to print directly to a specific system printer
 function printWithSystemPrinter(cmds, printerName, callback) {
   const res = {};
   
-  console.log(`Printing to system printer: ${printerName}`);
+  console.log(`🖨️ Printing to system printer: ${printerName}`);
   
   try {
+    // Clean ESC/POS commands for system printer compatibility
+    const cleanText = cleanEscPosCommands(cmds);
+    
+    // Format the text better for thermal printers
+    const formattedText = cleanText
+      .replace(/\n/g, '\r\n')  // Ensure proper line endings
+      .replace(/\r\r\n/g, '\r\n')  // Remove double returns
+      + '\r\n\r\n\r\n';  // Add extra lines for proper cut
+    
     // Create a temporary file and use system print command
     const tempFile = path.join(os.tmpdir(), `print_${Date.now()}.txt`);
     
-    fs.writeFileSync(tempFile, cmds);
-    console.log(`Created temp file: ${tempFile}`);
-    console.log(`File content preview: ${cmds.substring(0, 100)}...`);
+    fs.writeFileSync(tempFile, formattedText, 'utf8');
+    console.log(`📄 Created temp file: ${tempFile}`);
+    console.log(`📋 File size: ${fs.statSync(tempFile).size} bytes`);
+    console.log(`🔍 Content preview: ${formattedText.substring(0, 300)}...`);
     
-    let printCommand;
     if (os.platform() === 'win32') {
-      // Try multiple Windows printing methods for better compatibility
-      console.log(`Attempting to print to Windows printer: ${printerName}`);
+      console.log(`🚀 Attempting Windows print to: ${printerName}`);
       
-      // Method 1: PowerShell (recommended for modern Windows)
-      printCommand = `powershell -Command "& {Get-Content '${tempFile}' | Out-Printer -Name '${printerName}'}"`;
+      // Method 1: Use copy command directly to printer (most reliable for thermal printers)
+      let printCommand = `copy "${tempFile}" "\\\\localhost\\${printerName}"`;
       
       // Add timeout to prevent hanging
-      const printProcess = exec(printCommand, { timeout: 10000 }, (error, stdout, stderr) => {
+      const printProcess = exec(printCommand, { timeout: 15000 }, (error, stdout, stderr) => {
         if (!error) {
-          console.log('✅ PowerShell print successful');
+          console.log('✅ Copy to printer successful');
           try { fs.unlinkSync(tempFile); } catch(e) {}
           res.message = `BERHASIL MENCETAK DATA (${printerName})`;
           res.status = 200;
           return callback(res);
         }
         
-        console.log('⚠️ PowerShell print failed, trying notepad method:', error.message);
+        console.log('⚠️ Copy method failed, trying print command:', error.message);
         
-        // Method 2: Simple print command (more reliable than notepad)
-        const printCmd = `print /D:"${printerName}" "${tempFile}"`;
-        exec(printCmd, (printError, printStdout, printStderr) => {
+        // Method 2: Traditional print command
+        const printCmd = `print "${tempFile}" /D:"${printerName}"`;
+        exec(printCmd, { timeout: 15000 }, (printError, printStdout, printStderr) => {
           if (!printError) {
             console.log('✅ Print command successful');
             try { fs.unlinkSync(tempFile); } catch(e) {}
@@ -362,24 +411,26 @@ function printWithSystemPrinter(cmds, printerName, callback) {
             return callback(res);
           }
           
-          console.log('⚠️ Print command failed, trying copy to printer port:', printError.message);
+          console.log('⚠️ Print command failed, trying PowerShell:', printError.message);
           
-          // Method 3: Copy to printer port (final fallback)
-          const copyCmd = `copy "${tempFile}" "\\\\localhost\\${printerName}"`;
-          exec(copyCmd, (copyError) => {
+          // Method 3: PowerShell method (final fallback)
+          const psCommand = `powershell -Command "& {Get-Content '${tempFile}' -Raw | Out-Printer -Name '${printerName}'}"`;
+          exec(psCommand, { timeout: 15000 }, (psError) => {
             try { fs.unlinkSync(tempFile); } catch(e) {}
             
-            if (copyError) {
-              console.error('❌ All Windows print methods failed. Error details:', {
+            if (psError) {
+              console.error('❌ All Windows print methods failed. Details:', {
                 printerName,
-                powershellError: error.message,
+                copyError: error.message,
                 printError: printError.message,
-                copyError: copyError.message
+                powershellError: psError.message,
+                tempFile: tempFile,
+                fileExists: fs.existsSync(tempFile)
               });
-              res.message = `ERROR: Could not print to ${printerName}. Please check if printer is available and online.`;
+              res.message = `ERROR: Tidak dapat mencetak ke ${printerName}. Coba restart printer atau pilih printer lain.`;
               res.status = 500;
             } else {
-              console.log('✅ Copy to printer port successful');
+              console.log('✅ PowerShell print successful');
               res.message = `BERHASIL MENCETAK DATA (${printerName})`;
               res.status = 200;
             }
@@ -390,17 +441,17 @@ function printWithSystemPrinter(cmds, printerName, callback) {
       
     } else {
       // Unix-like systems
-      printCommand = `lp -d "${printerName}" "${tempFile}"`;
+      const printCommand = `lp -d "${printerName}" "${tempFile}"`;
       
-      exec(printCommand, (error, stdout, stderr) => {
+      exec(printCommand, { timeout: 15000 }, (error, stdout, stderr) => {
         try { fs.unlinkSync(tempFile); } catch(e) {}
         
         if (error) {
-          console.error('Unix print error:', error);
+          console.error('❌ Unix print error:', error);
           res.message = `ERROR PRINTING TO ${printerName}: ${error.message}`;
           res.status = 500;
         } else {
-          console.log('Unix print successful');
+          console.log('✅ Unix print successful');
           res.message = `BERHASIL MENCETAK DATA (${printerName})`;
           res.status = 200;
         }
@@ -409,7 +460,7 @@ function printWithSystemPrinter(cmds, printerName, callback) {
     }
     
   } catch (e) {
-    console.error(`ERROR SYSTEM PRINTER: ${e}`);
+    console.error(`❌ ERROR SYSTEM PRINTER: ${e}`);
     res.message = `ERROR SYSTEM PRINTER: ${e.message}`;
     res.status = 500;
     return callback(res);
@@ -418,6 +469,8 @@ function printWithSystemPrinter(cmds, printerName, callback) {
 
 function printSend(cmds, callback) {
   const res = {};
+
+  console.log('🚀 printSend called with data length:', cmds?.length || 0);
 
   // Check printer availability automatically
   checkPrinterAvailability((printerInfo) => {
@@ -429,8 +482,9 @@ function printSend(cmds, callback) {
     }
 
     if (printerInfo.type === 'usb') {
-      // Use USB printer
+      // Use USB printer with raw ESC/POS commands (no cleaning needed for USB)
       try {
+        console.log('🔌 Using USB printer with raw ESC/POS commands');
         const options = { encoding: "GB18030" };
         const device = getUSBDevice();
         const printer = new escpos.Printer(device, options);
@@ -462,16 +516,19 @@ function printSend(cmds, callback) {
         return callback(res);
       }
     } else if (printerInfo.type === 'system') {
-      // Use system printer (fallback)
-      console.log(`Using system printer: ${printerInfo.printer}`);
+      // Use system printer with cleaned ESC/POS commands
+      console.log(`🖨️ Using system printer: ${printerInfo.printer}`);
       
-      // For system printers, we'll use a different approach
-      // This could be enhanced to use node-printer or other system printing libraries
+      // Clean ESC/POS commands for system printer compatibility
+      const cleanText = cleanEscPosCommands(cmds);
+      console.log('📝 Using cleaned text for system printer');
+      
       try {
         // Create a temporary file and use system print command
         const tempFile = path.join(os.tmpdir(), `print_${Date.now()}.txt`);
         
-        fs.writeFileSync(tempFile, cmds);
+        fs.writeFileSync(tempFile, cleanText, 'utf8');
+        console.log(`📄 Created temp file with cleaned text: ${tempFile}`);
         
         let printCommand;
         if (os.platform() === 'win32') {
@@ -480,22 +537,25 @@ function printSend(cmds, callback) {
           printCommand = `lp -d "${printerInfo.printer}" "${tempFile}"`;
         }
         
+        console.log('⚡ Executing print command:', printCommand);
+        
         exec(printCommand, (error, stdout, stderr) => {
           // Clean up temp file
           try { fs.unlinkSync(tempFile); } catch(e) {}
           
           if (error) {
-            console.error('System print error:', error);
+            console.error('❌ System print error:', error);
             res.message = `ERROR SYSTEM PRINT: ${error.message}`;
             res.status = 500;
           } else {
+            console.log('✅ System print successful');
             res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
             res.status = 200;
           }
           return callback(res);
         });
       } catch (e) {
-        console.error(`ERROR SYSTEM PRINTER: ${e}`);
+        console.error(`❌ ERROR SYSTEM PRINTER: ${e}`);
         res.message = `ERROR SYSTEM PRINTER: ${e.message}`;
         res.status = 500;
         return callback(res);
@@ -574,31 +634,35 @@ function printResi(data, callback) {
       }
     } else if (printerInfo.type === 'system') {
       // Use system printer for receipt (simplified version)
-      console.log(`Using system printer for receipt: ${printerInfo.printer}`);
+      console.log(`🖨️ Using system printer for receipt: ${printerInfo.printer}`);
       
       try {
         var noResi = data.code;
         var receiptName = data.receipt;
         var productName = data.product;
         
-        // Create simplified receipt text for system printer
-        const receiptText = `
+        // Create receipt text with ESC/POS commands
+        const receiptWithEscPos = `\x1B@\x1B!\x00NO RESI : ${noResi}\n\x1B!\x00PENERIMA : ${receiptName}\n\x1B!\x00${productName}\n\x1B!\x00${noResi}\n\x1Bm`;
+        
+        // Clean ESC/POS commands for system printer compatibility
+        const cleanReceiptText = cleanEscPosCommands(receiptWithEscPos);
+        
+        // Add some basic formatting for readability
+        const finalReceiptText = `
 =============================
            RECEIPT           
 =============================
-NO RESI : ${noResi}
-PENERIMA : ${receiptName}
-${productName}
-=============================
-           ${noResi}        
+${cleanReceiptText}
 =============================
 
 
 `;
         
+        console.log('📝 Created clean receipt text for system printer');
+        
         const tempFile = path.join(os.tmpdir(), `receipt_${Date.now()}.txt`);
         
-        fs.writeFileSync(tempFile, receiptText);
+        fs.writeFileSync(tempFile, finalReceiptText, 'utf8');
         
         let printCommand;
         if (os.platform() === 'win32') {
@@ -666,6 +730,41 @@ Total             : 11.00
   
   res.setHeader('Content-Type', 'text/plain');
   res.send(receiptData);
+});
+
+// Endpoint to test print functionality
+app.post('/test-print', (req, res) => {
+  const printerName = req.body.printer || 'auto';
+  
+  console.log('🧪 Test print request for printer:', printerName);
+  
+  const testData = `
+=============================
+        TEST PRINT         
+=============================
+Date: ${new Date().toLocaleString()}
+Printer: ${printerName}
+Test: Simple text printing
+=============================
+Line 1: Normal text
+Line 2: Numbers 1234567890
+Line 3: Special chars !@#$%
+=============================
+End of test print
+=============================
+
+
+`;
+
+  if (printerName === 'auto') {
+    printSend(testData, (result) => {
+      res.json(result);
+    });
+  } else {
+    printWithSystemPrinter(testData, printerName, (result) => {
+      res.json(result);
+    });
+  }
 });
 
 // Endpoint to check printer status
