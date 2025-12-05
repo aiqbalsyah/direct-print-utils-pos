@@ -73,11 +73,23 @@ jobs:
                   ) else (
                     echo "❌ No executable found in dist folder"
                     dir dist
-                    exit 1
+                    exit /b 1
                   )
 
                   echo "Copying all Windows scripts for installer..."
-                  xcopy /E /I /Y scripts\windows installer\scripts\
+                  if exist "scripts\windows" (
+                    xcopy /E /I /Y scripts\windows installer\scripts\
+                    echo "✅ Scripts copied successfully"
+                  ) else (
+                    echo "❌ scripts\windows folder not found"
+                    exit /b 1
+                  )
+
+                  echo "Verifying installer structure..."
+                  echo "Contents of installer\bin:"
+                  dir installer\bin
+                  echo "Contents of installer\scripts:"
+                  dir installer\scripts /s
 
                   echo "✅ MSI structure prepared successfully"
               shell: cmd
