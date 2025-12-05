@@ -43,6 +43,19 @@ jobs:
                   call build-complete.bat
               shell: cmd
 
+            - name: Debug build output
+              run: |
+                  echo "Checking what was built..."
+                  echo "Contents of dist folder:"
+                  if exist "dist" (
+                    dir dist
+                  ) else (
+                    echo "❌ dist folder not found"
+                  )
+                  echo "Contents of current directory:"
+                  dir *.exe 2>nul || echo "No .exe files in current directory"
+              shell: cmd
+
             - name: Prepare MSI structure
               run: |
                   echo "Preparing files for MSI creation..."
@@ -50,10 +63,20 @@ jobs:
                   mkdir installer\bin 2>nul || echo "installer\bin exists"
                   mkdir installer\scripts 2>nul || echo "installer\scripts exists"
 
-                  REM Copy built files from dist folder
-                  xcopy /E /I /Y dist installer\bin\
+                  echo "Copying executable with correct name..."
+                  if exist "dist\direct-print-win.exe" (
+                    copy "dist\direct-print-win.exe" "installer\bin\DirectPrintServer.exe"
+                    echo "✅ Executable copied as DirectPrintServer.exe"
+                  ) else if exist "dist\DirectPrintServer.exe" (
+                    copy "dist\DirectPrintServer.exe" "installer\bin\DirectPrintServer.exe"
+                    echo "✅ DirectPrintServer.exe copied"
+                  ) else (
+                    echo "❌ No executable found in dist folder"
+                    dir dist
+                    exit 1
+                  )
 
-                  REM Copy all Windows scripts for installer
+                  echo "Copying all Windows scripts for installer..."
                   xcopy /E /I /Y scripts\windows installer\scripts\
 
                   echo "✅ MSI structure prepared successfully"
