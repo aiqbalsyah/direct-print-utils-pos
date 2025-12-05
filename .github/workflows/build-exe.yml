@@ -1,0 +1,134 @@
+name: Build Windows Executable
+
+on:
+    workflow_dispatch:
+        inputs:
+            create_release:
+                description: "Create GitHub Release"
+                required: false
+                default: false
+                type: boolean
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    build-exe:
+        runs-on: windows-latest
+        name: Build Windows Executable
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js 18
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "18.18.0"
+
+            - name: Install dependencies
+              run: |
+                  echo "Installing dependencies..."
+                  npm install
+              shell: cmd
+
+            - name: Build executable
+              run: |
+                  echo "Building Windows executable..."
+                  call build-complete.bat
+              shell: cmd
+
+            - name: Verify build
+              run: |
+                  echo "Verifying build output..."
+                  if exist "dist\direct-print-win.exe" (
+                    echo "✅ Executable built successfully!"
+                    for %%I in (dist\direct-print-win.exe) do echo "File size: %%~zI bytes"
+                    echo "File details:"
+                    dir dist\direct-print-win.exe
+                  ) else (
+                    echo "❌ Build failed - executable not found"
+                    echo "Contents of dist folder:"
+                    if exist "dist" (dir dist) else (echo "dist folder not found")
+                    exit /b 1
+                  )
+              shell: cmd
+
+            - name: Create release package
+              run: |
+                  echo "Creating release package..."
+                  mkdir release
+                  copy "dist\direct-print-win.exe" "release\DirectPrintServer.exe"
+
+                  echo "Copying scripts..."
+                  if exist "scripts" (
+                    xcopy /E /I /Y "scripts" "release\scripts\"
+                  )
+
+                  echo "Creating README..."
+                  echo Direct Print Server - Windows Executable > release\README.txt
+                  echo. >> release\README.txt
+                  echo Usage Instructions: >> release\README.txt
+                  echo 1. Run DirectPrintServer.exe >> release\README.txt
+                  echo 2. Server will start on http://localhost:4000 >> release\README.txt
+                  echo 3. Use Ctrl+C to stop the server >> release\README.txt
+                  echo. >> release\README.txt
+                  echo Features: >> release\README.txt
+                  echo - System printer support >> release\README.txt
+                  echo - Automatic printer detection >> release\README.txt
+                  echo - UMUM printer type support >> release\README.txt
+                  echo - USB compatibility for Windows >> release\README.txt
+                  echo - Web-based printing interface >> release\README.txt
+
+                  echo "✅ Release package created"
+              shell: cmd
+
+            - name: Upload executable artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: direct-print-executable-${{ github.sha }}
+                  path: release/
+                  retention-days: 90
+
+            - name: Create Release
+              if: ${{ inputs.create_release || startsWith(github.ref, 'refs/tags/v') }}
+              uses: softprops/action-gh-release@v1
+              with:
+                  files: |
+                      release/DirectPrintServer.exe
+                      release/scripts/**/*
+                  name: Direct Print Server v${{ github.ref_name || github.run_number }}
+                  tag_name: ${{ github.ref_name || format('exe-v{0}', github.run_number) }}
+                  body: |
+                      ## 🖨️ Direct Print Server - Windows Executable
+
+                      ### 🚀 Quick Start:
+                      1. Download `DirectPrintServer.exe`
+                      2. Double-click to run
+                      3. Server starts at `http://localhost:4000`
+                      4. Use Ctrl+C to stop
+
+                      ### ✅ Features:
+                      - **System Printer Support** - Works with any Windows printer
+                      - **Automatic Detection** - Finds and uses default printer  
+                      - **UMUM Support** - Handles "UMUM" printer type conversion
+                      - **USB Compatible** - Safe USB handling for Windows
+                      - **Web Interface** - Easy-to-use web-based printing
+                      - **Portable** - Single executable, no installation needed
+
+                      ### 💻 System Requirements:
+                      - Windows 10/11
+                      - No additional dependencies required
+                      - Works with any printer installed on Windows
+
+                      ### 🔧 Advanced Usage:
+                      - For service installation, use the included scripts
+                      - Configure printers through Windows Settings
+                      - Server automatically detects available printers
+
+                      Perfect for quick deployment and testing!
+                  draft: false
+                  prerelease: false
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
