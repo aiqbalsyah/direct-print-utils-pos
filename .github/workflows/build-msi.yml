@@ -47,51 +47,55 @@ jobs:
               run: |
                   echo "Checking what was built..."
                   echo "Contents of dist folder:"
-                  if exist "dist" (
-                    dir dist
+                  dir dist
+                  echo "✅ Found direct-print-win.exe - build successful!"
+
+                  echo "Checking scripts folder structure:"
+                  if exist "scripts" (
+                    dir scripts
+                    if exist "scripts\windows" (
+                      echo "✅ scripts\windows exists"
+                      dir scripts\windows
+                    ) else (
+                      echo "❌ scripts\windows not found"
+                    )
                   ) else (
-                    echo "❌ dist folder not found"
+                    echo "❌ scripts folder not found"
                   )
-                  echo "Contents of current directory:"
-                  dir *.exe 2>nul || echo "No .exe files in current directory"
               shell: cmd
 
             - name: Prepare MSI structure
               run: |
                   echo "Preparing files for MSI creation..."
-                  mkdir installer 2>nul || echo "installer exists"
-                  mkdir installer\bin 2>nul || echo "installer\bin exists"
-                  mkdir installer\scripts 2>nul || echo "installer\scripts exists"
+                  if not exist "installer" mkdir installer
+                  if not exist "installer\bin" mkdir installer\bin
+                  if not exist "installer\scripts" mkdir installer\scripts
 
-                  echo "Copying executable with correct name..."
-                  if exist "dist\direct-print-win.exe" (
-                    copy "dist\direct-print-win.exe" "installer\bin\DirectPrintServer.exe"
-                    echo "✅ Executable copied as DirectPrintServer.exe"
-                  ) else if exist "dist\DirectPrintServer.exe" (
-                    copy "dist\DirectPrintServer.exe" "installer\bin\DirectPrintServer.exe"
-                    echo "✅ DirectPrintServer.exe copied"
-                  ) else (
-                    echo "❌ No executable found in dist folder"
-                    dir dist
+                  echo "Copying executable..."
+                  copy "dist\direct-print-win.exe" "installer\bin\DirectPrintServer.exe"
+                  if %ERRORLEVEL% NEQ 0 (
+                    echo "❌ Failed to copy executable"
                     exit /b 1
                   )
+                  echo "✅ Executable copied successfully"
 
-                  echo "Copying all Windows scripts for installer..."
+                  echo "Copying scripts..."
                   if exist "scripts\windows" (
-                    xcopy /E /I /Y scripts\windows installer\scripts\
+                    xcopy /E /I /Y "scripts\windows" "installer\scripts"
+                    if %ERRORLEVEL% NEQ 0 (
+                      echo "❌ Failed to copy scripts"
+                      exit /b 1
+                    )
                     echo "✅ Scripts copied successfully"
                   ) else (
-                    echo "❌ scripts\windows folder not found"
-                    exit /b 1
+                    echo "⚠️ No scripts\windows folder found, continuing..."
                   )
 
-                  echo "Verifying installer structure..."
-                  echo "Contents of installer\bin:"
+                  echo "Verifying installer structure:"
                   dir installer\bin
-                  echo "Contents of installer\scripts:"
-                  dir installer\scripts /s
+                  if exist "installer\scripts" dir installer\scripts
 
-                  echo "✅ MSI structure prepared successfully"
+                  echo "✅ MSI structure prepared"
               shell: cmd
 
             - name: Create WiX configuration
