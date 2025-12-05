@@ -53,9 +53,18 @@ jobs:
 
             - name: Install dependencies and build tool
               run: |
-                  copy package-msi.json package.json
-                  npm install
-                  npm install pkg --save-dev
+                  echo "Using original package.json instead of creating new one..."
+                  echo "Setting npm configuration for reliability..."
+                  npm config set registry https://registry.npmjs.org/
+                  npm config set fetch-retries 5
+                  npm config set fetch-retry-mintimeout 20000
+                  npm config set timeout 120000
+
+                  echo "Installing dependencies..."
+                  npm ci --prefer-offline --no-audit --no-fund || npm install --no-audit --no-fund
+
+                  echo "Installing pkg..."
+                  npm install pkg --save-dev --no-audit --no-fund
               shell: cmd
 
             - name: Build executable
