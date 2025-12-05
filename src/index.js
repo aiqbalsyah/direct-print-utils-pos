@@ -53,76 +53,131 @@ try {
 
 // Function to detect available printers
 function detectAvailablePrinters(callback) {
-  let command;
-  
   if (os.platform() === 'win32') {
-    // Windows: Use wmic to list printers
-    command = 'wmic printer list brief';
-  } else if (os.platform() === 'darwin') {
-    // macOS: Use lpstat to list printers
-    command = 'lpstat -p';
-  } else {
-    // Linux: Use lpstat to list printers
-    command = 'lpstat -p';
-  }
-  
-  exec(command, (error, stdout, stderr) => {
-    if (error) {
-      console.log('Could not detect system printers:', error.message);
-      return callback([]);
-    }
+    // Windows: Try multiple methods for maximum compatibility
+    console.log('Detecting Windows printers...');
     
-    const printers = [];
-    const lines = stdout.split('\n').filter(line => line.trim());
+    // Method 1: Simple PowerShell command
+    const psCommand = 'powershell -Command "Get-Printer | Select-Object -ExpandProperty Name"';
     
-    if (os.platform() === 'win32') {
-      // Parse Windows printer output
-      lines.forEach((line, index) => {
-        if (index > 0 && line.includes('TRUE')) { // Skip header, get only available printers
-          const parts = line.split(/\s+/);
-          if (parts[0]) printers.push(parts[0]);
+    exec(psCommand, (error, stdout, stderr) => {
+      if (!error && stdout.trim()) {
+        const printers = stdout.split('\n')
+          .map(line => line.trim())
+          .filter(line => line.length > 0);
+        
+        if (printers.length > 0) {
+          console.log('PowerShell detected printers:', printers);
+          return callback(printers);
         }
+      }
+      
+      console.log('PowerShell method failed, trying wmic...');
+      
+      // Method 2: WMIC fallback
+      const wmicCommand = 'wmic printer get name /format:list';
+      exec(wmicCommand, (wmicError, wmicStdout) => {
+        if (!wmicError && wmicStdout) {
+          const printers = [];
+          const lines = wmicStdout.split('\n');
+          
+          lines.forEach(line => {
+            if (line.startsWith('Name=')) {
+              const printerName = line.substring(5).trim();
+              if (printerName && printerName.length > 0) {
+                printers.push(printerName);
+              }
+            }
+          });
+          
+          if (printers.length > 0) {
+            console.log('WMIC detected printers:', printers);
+            return callback(printers);
+          }
+        }
+        
+        console.log('All Windows printer detection methods failed');
+        callback([]);
       });
-    } else {
-      // Parse Unix-like printer output
+    });
+    
+  } else {
+    // Unix-like systems (macOS, Linux)
+    const command = os.platform() === 'darwin' ? 'lpstat -p' : 'lpstat -p';
+    
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        console.log('Could not detect system printers:', error.message);
+        return callback([]);
+      }
+      
+      const printers = [];
+      const lines = stdout.split('\n').filter(line => line.trim());
+      
       lines.forEach(line => {
         const match = line.match(/printer\s+(.+?)\s+/);
         if (match) printers.push(match[1]);
       });
-    }
-    
-    callback(printers);
-  });
+      
+      console.log('Unix detected printers:', printers);
+      callback(printers);
+    });
+  }
 }
 
 // Function to get default printer
 function getDefaultPrinter(callback) {
-  let command;
-  
   if (os.platform() === 'win32') {
-    command = 'wmic printer where "Default=TRUE" get Name /value';
+    console.log('Getting Windows default printer...');
+    
+    // Method 1: Simple PowerShell command
+    const psCommand = 'powershell -Command "Get-WmiObject -Class Win32_Printer | Where-Object {$_.Default} | Select-Object -ExpandProperty Name"';
+    
+    exec(psCommand, (error, stdout) => {
+      if (!error && stdout.trim()) {
+        const defaultPrinter = stdout.trim();
+        console.log('PowerShell found default printer:', defaultPrinter);
+        return callback(defaultPrinter);
+      }
+      
+      console.log('PowerShell method failed, trying wmic...');
+      
+      // Method 2: WMIC fallback
+      const wmicCommand = 'wmic printer where "Default=TRUE" get Name /format:list';
+      exec(wmicCommand, (wmicError, wmicStdout) => {
+        if (!wmicError && wmicStdout) {
+          const lines = wmicStdout.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('Name=')) {
+              const printerName = line.substring(5).trim();
+              if (printerName) {
+                console.log('WMIC found default printer:', printerName);
+                return callback(printerName);
+              }
+            }
+          }
+        }
+        
+        console.log('No default printer found');
+        callback(null);
+      });
+    });
+    
   } else {
-    command = 'lpstat -d';
-  }
-  
-  exec(command, (error, stdout, stderr) => {
-    if (error) {
-      console.log('Could not get default printer:', error.message);
-      return callback(null);
-    }
-    
-    let defaultPrinter = null;
-    
-    if (os.platform() === 'win32') {
-      const match = stdout.match(/Name=(.+)/);
-      if (match) defaultPrinter = match[1].trim();
-    } else {
+    // Unix-like systems
+    const command = 'lpstat -d';
+    exec(command, (error, stdout) => {
+      if (error) {
+        console.log('Could not get default printer:', error.message);
+        return callback(null);
+      }
+      
       const match = stdout.match(/system default destination: (.+)/);
-      if (match) defaultPrinter = match[1].trim();
-    }
-    
-    callback(defaultPrinter);
-  });
+      const defaultPrinter = match ? match[1].trim() : null;
+      console.log('Unix default printer:', defaultPrinter);
+      callback(defaultPrinter);
+    });
+  }
 }
 
 // Function to check if USB printer is available, with fallback to system printer
