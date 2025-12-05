@@ -1,11 +1,6 @@
 name: Build Direct Print for Windows
 
 on:
-    push:
-        branches: [main, master]
-        tags: ["v*"]
-    pull_request:
-        branches: [main, master]
     workflow_dispatch:
 
 jobs:
@@ -33,7 +28,7 @@ jobs:
             - name: Install dependencies
               run: |
                   npm ci
-                  npm install -g pkg
+                  npm install pkg --save-dev
               shell: cmd
 
             - name: Build Windows executable

@@ -1,11 +1,6 @@
 name: Build Windows MSI Installer
 
 on:
-    push:
-        branches: [main, master]
-        tags: ["v*"]
-    pull_request:
-        branches: [main, master]
     workflow_dispatch:
         inputs:
             create_release:

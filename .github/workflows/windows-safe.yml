@@ -1,10 +1,6 @@
 name: Windows USB-Safe Build
 
 on:
-    push:
-        paths:
-            - "src/**"
-            - "package*.json"
     workflow_dispatch:
         inputs:
             create_release:
@@ -65,13 +61,13 @@ jobs:
             - name: Install safe dependencies
               run: |
                   npm install
-                  npm install -g pkg
+                  npm install pkg --save-dev
               shell: cmd
 
             - name: Build Windows-safe executable
               run: |
                   echo "Building USB-safe Windows executable..."
-                  pkg . --targets node18-win-x64 --output ./dist/direct-print-windows-safe.exe
+                  npx pkg . --targets node18-win-x64 --output ./dist/direct-print-windows-safe.exe
               shell: cmd
 
             - name: Restore original package.json

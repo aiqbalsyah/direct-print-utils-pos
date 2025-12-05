@@ -1,10 +1,6 @@
 name: Build Multi-Platform
 
 on:
-    push:
-        branches: [main, master]
-    pull_request:
-        branches: [main, master]
     workflow_dispatch:
 
 jobs:
@@ -51,11 +47,11 @@ jobs:
             - name: Install dependencies
               run: |
                   npm ci
-                  npm install -g pkg
+                  npm install pkg --save-dev
 
             - name: Build executable
               run: |
-                  pkg . --targets ${{ matrix.target }} --output ./dist/${{ matrix.output }}
+                  npx pkg . --targets ${{ matrix.target }} --output ./dist/${{ matrix.output }}
 
             - name: Copy additional files (Windows)
               if: runner.os == 'Windows'

@@ -1,9 +1,6 @@
 name: Build Windows MSI (Simple)
 
 on:
-    push:
-        branches: [main, master]
-        tags: ["v*"]
     workflow_dispatch:
         inputs:
             create_release:
