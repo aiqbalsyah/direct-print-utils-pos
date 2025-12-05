@@ -1,0 +1,82 @@
+name: Build Multi-Platform
+
+on:
+    push:
+        branches: [main, master]
+    pull_request:
+        branches: [main, master]
+    workflow_dispatch:
+
+jobs:
+    build:
+        strategy:
+            matrix:
+                include:
+                    - os: windows-latest
+                      target: node18-win-x64
+                      output: direct-print-win.exe
+                      name: Windows
+                    - os: macos-latest
+                      target: node18-mac-x64
+                      output: direct-print-mac
+                      name: macOS
+                    - os: ubuntu-latest
+                      target: node18-linux-x64
+                      output: direct-print-linux
+                      name: Linux
+
+        runs-on: ${{ matrix.os }}
+        name: Build for ${{ matrix.name }}
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "18.18.0"
+                  cache: "npm"
+
+            - name: Setup Python (Windows/macOS)
+              if: runner.os != 'Linux'
+              uses: actions/setup-python@v4
+              with:
+                  python-version: "3.x"
+
+            - name: Setup build tools (Windows)
+              if: runner.os == 'Windows'
+              uses: microsoft/setup-msbuild@v1.3
+
+            - name: Install dependencies
+              run: |
+                  npm ci
+                  npm install -g pkg
+
+            - name: Build executable
+              run: |
+                  pkg . --targets ${{ matrix.target }} --output ./dist/${{ matrix.output }}
+
+            - name: Copy additional files (Windows)
+              if: runner.os == 'Windows'
+              run: |
+                  copy scripts\*.bat dist\
+              shell: cmd
+
+            - name: Copy additional files (Unix)
+              if: runner.os != 'Windows'
+              run: |
+                  chmod +x dist/${{ matrix.output }}
+
+            - name: Test build
+              run: |
+                  ls -la dist/ || dir dist\
+
+            - name: Upload artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: direct-print-${{ matrix.name }}-${{ github.sha }}
+                  path: |
+                      dist/${{ matrix.output }}
+                      dist/*.bat
+                  retention-days: 30

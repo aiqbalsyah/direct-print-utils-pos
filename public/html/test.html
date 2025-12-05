@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Direct Print Test</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <div style="padding: 20px; font-family: Arial, sans-serif;">
+        <h1>Direct Print Test</h1>
+        
+        <div style="margin: 20px 0;">
+            <label for="printerName">Select Printer:</label>
+            <select id="printerName" style="margin: 10px; padding: 5px; width: 200px;">
+                <option value="auto">Auto Detect</option>
+            </select>
+            <button onclick="loadPrinters()" style="margin-left: 10px; padding: 5px 10px;">Refresh Printers</button>
+        </div>
+        
+        <div style="margin: 20px 0;">
+            <label for="transactionId">Transaction ID:</label>
+            <input type="text" id="transactionId" value="TRX001" style="margin: 10px; padding: 5px;">
+        </div>
+        
+        <div style="margin: 20px 0;">
+            <button onclick="printStruk()" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px;">
+                Print Receipt
+            </button>
+            <button onclick="checkPrinterStatus()" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 5px; margin-left: 10px;">
+                Check Printer Status
+            </button>
+        </div>
+        
+        <div id="status" style="margin: 20px 0; padding: 10px; background: #f8f9fa; border-radius: 5px;">
+            Status: Ready
+        </div>
+        
+        <div id="log" style="margin: 20px 0; padding: 10px; background: #f8f9fa; border-radius: 5px; height: 200px; overflow-y: auto;">
+            <h3>Log:</h3>
+        </div>
+    </div>
+
+    <script>
+        const hostUrl = 'http://localhost:4000/';
+        const socket2 = io('http://localhost:4000');
+        
+        // Log function
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const now = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `<div>[${now}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        // Socket connection events
+        socket2.on('connect', () => {
+            log('✅ Connected to print server');
+            loadPrinters();
+        });
+        
+        socket2.on('disconnect', () => {
+            log('❌ Disconnected from print server');
+        });
+        
+        socket2.on('print-response', (response) => {
+            log(`Print response: ${response.message} (Status: ${response.status})`);
+            
+            Swal.close(); // Close the waiting dialog
+            
+            if (response.status === 200) {
+                Swal.fire({
+                    title: 'Success!',
+                    text: response.message,
+                    icon: 'success',
+                    confirmButtonText: 'OK'
+                });
+            } else {
+                Swal.fire({
+                    title: 'Error!',
+                    text: response.message,
+                    icon: 'error',
+                    confirmButtonText: 'OK'
+                });
+            }
+        });
+        
+        // Load available printers
+        function loadPrinters() {
+            log('🔄 Loading available printers...');
+            $.get(hostUrl + 'printers')
+                .done(function(data) {
+                    const select = document.getElementById('printerName');
+                    select.innerHTML = '<option value="auto">Auto Detect</option>';
+                    select.innerHTML += '<option value="UMUM">UMUM (Auto Detect)</option>';
+                    
+                    if (data.printers && data.printers.length > 0) {
+                        data.printers.forEach(printer => {
+                            const option = document.createElement('option');
+                            option.value = printer;
+                            option.textContent = printer + (printer === data.defaultPrinter ? ' (Default)' : '');
+                            select.appendChild(option);
+                        });
+                        log(`📄 Found ${data.printers.length} printer(s): ${data.printers.join(', ')}`);
+                        if (data.defaultPrinter) {
+                            log(`🎯 Default printer: ${data.defaultPrinter}`);
+                        }
+                    } else {
+                        log('⚠️ No system printers found');
+                    }
+                    
+                    log(`🔌 USB printing: ${data.usbAvailable ? 'Available' : 'Not Available'}`);
+                })
+                .fail(function() {
+                    log('❌ Failed to load printers');
+                });
+        }
+        
+        // Check printer status
+        function checkPrinterStatus() {
+            log('🔍 Checking printer status...');
+            $.get(hostUrl + 'printer-status')
+                .done(function(data) {
+                    document.getElementById('status').innerHTML = 
+                        `Status: ${data.available ? '✅ Available' : '❌ Not Available'}<br>` +
+                        `Type: ${data.type}<br>` +
+                        `Printer: ${data.printer || 'None'}<br>` +
+                        `Message: ${data.message}`;
+                    
+                    log(`📊 Printer Status - Available: ${data.available}, Type: ${data.type}, Printer: ${data.printer}`);
+                })
+                .fail(function() {
+                    log('❌ Failed to check printer status');
+                });
+        }
+        
+        // Print function (matching your frontend code structure)
+        const printStruk = (idTrx, type = "true") => {
+            const transactionId = idTrx || document.getElementById('transactionId').value;
+            const printerType = $("#printerName").val();
+            
+            log(`📄 Printing receipt for transaction: ${transactionId}, printer: ${printerType}`);
+            
+            $.get({
+                url: `${hostUrl}sales/view/${transactionId}.txt?printerType=${printerType}&struckType=${type}`,
+            }).done(function(data) {
+                log(`📄 Receipt data received, sending to printer...`);
+                
+                Swal.fire({
+                    text: "Harap Menunggu Mencetak Struk!",
+                    allowOutsideClick: false,
+                    allowEscapeKey: false,
+                    icon: "info",
+                    buttonsStyling: false,
+                    showConfirmButton: false,
+                    customClass: {
+                        confirmButton: "btn btn-primary"
+                    }
+                });
+                
+                // Send print command via socket
+                socket2.emit("print", {
+                    printerType: printerType,
+                    dataPrint: data
+                });
+            }).fail(function() {
+                log('❌ Failed to get receipt data');
+                Swal.fire({
+                    title: 'Error!',
+                    text: 'Failed to get receipt data',
+                    icon: 'error'
+                });
+            });
+        };
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            log('🚀 Direct Print Test Page Loaded');
+        });
+    </script>
+</body>
+</html>

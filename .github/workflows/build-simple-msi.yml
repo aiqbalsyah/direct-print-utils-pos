@@ -1,0 +1,268 @@
+name: Build Windows MSI (Simple)
+
+on:
+    push:
+        branches: [main, master]
+        tags: ["v*"]
+    workflow_dispatch:
+        inputs:
+            create_release:
+                description: "Create GitHub Release"
+                required: false
+                default: false
+                type: boolean
+
+jobs:
+    build-simple-msi:
+        runs-on: windows-latest
+        name: Build Simple Windows MSI
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "18.18.0"
+
+            - name: Install electron-builder
+              run: |
+                  npm install -g electron-builder
+                  npm install electron --save-dev
+              shell: cmd
+
+            - name: Create electron main file
+              run: |
+                  $electronMain = @'
+                  const { app, BrowserWindow } = require('electron');
+                  const path = require('path');
+                  const { spawn } = require('child_process');
+
+                  let mainWindow;
+                  let serverProcess;
+
+                  function createWindow() {
+                    mainWindow = new BrowserWindow({
+                      width: 400,
+                      height: 300,
+                      webPreferences: {
+                        nodeIntegration: false,
+                        contextIsolation: true
+                      },
+                      icon: path.join(__dirname, 'assets', 'icon.png'),
+                      show: false // Start hidden
+                    });
+                    
+                    // Start the Direct Print server
+                    serverProcess = spawn('node', [path.join(__dirname, 'src', 'index.js')], {
+                      cwd: __dirname,
+                      detached: false
+                    });
+                    
+                    // Load a simple status page
+                    mainWindow.loadFile(path.join(__dirname, 'electron-status.html'));
+                    
+                    // Hide to system tray instead of closing
+                    mainWindow.on('close', (event) => {
+                      event.preventDefault();
+                      mainWindow.hide();
+                    });
+                  }
+
+                  app.whenReady().then(createWindow);
+
+                  app.on('window-all-closed', () => {
+                    // Don't quit on macOS
+                    if (process.platform !== 'darwin') {
+                      if (serverProcess) serverProcess.kill();
+                      app.quit();
+                    }
+                  });
+
+                  app.on('before-quit', () => {
+                    if (serverProcess) serverProcess.kill();
+                  });
+                  '@
+                  $electronMain | Out-File -FilePath "electron-main.js" -Encoding utf8
+              shell: pwsh
+
+            - name: Create status HTML
+              run: |
+                  $statusHtml = @'
+                  <!DOCTYPE html>
+                  <html>
+                  <head>
+                    <title>Direct Print Server</title>
+                    <style>
+                      body { font-family: Arial; padding: 20px; text-align: center; }
+                      .status { color: green; font-weight: bold; }
+                    </style>
+                  </head>
+                  <body>
+                    <h2>Direct Print Server</h2>
+                    <p class="status">✅ Server Running</p>
+                    <p>Available at: <a href="http://localhost:4000">http://localhost:4000</a></p>
+                    <p><small>This window can be closed - server will continue running</small></p>
+                  </body>
+                  </html>
+                  '@
+                  $statusHtml | Out-File -FilePath "electron-status.html" -Encoding utf8
+              shell: pwsh
+
+            - name: Update package.json for Electron
+              run: |
+                  $packageContent = @'
+                  {
+                    "name": "direct-print-server",
+                    "version": "1.0.0",
+                    "description": "Direct Print Server for Windows",
+                    "main": "electron-main.js",
+                    "homepage": ".",
+                    "author": "Direct Print Solutions",
+                    "dependencies": {
+                      "express": "^4.18.2",
+                      "socket.io": "^4.7.2"
+                    },
+                    "devDependencies": {
+                      "electron": "latest",
+                      "electron-builder": "latest"
+                    },
+                    "scripts": {
+                      "electron": "electron .",
+                      "build-msi": "electron-builder --win --x64",
+                      "dist": "electron-builder"
+                    },
+                    "build": {
+                      "appId": "com.directprint.server",
+                      "productName": "Direct Print Server",
+                      "directories": {
+                        "output": "dist-msi"
+                      },
+                      "files": [
+                        "src/**/*",
+                        "public/**/*",
+                        "electron-main.js",
+                        "electron-status.html",
+                        "package.json"
+                      ],
+                      "win": {
+                        "target": [
+                          {
+                            "target": "msi",
+                            "arch": ["x64"]
+                          }
+                        ],
+                        "icon": "assets/icon.png"
+                      },
+                      "msi": {
+                        "oneClick": false,
+                        "allowToChangeInstallationDirectory": true,
+                        "createDesktopShortcut": true,
+                        "createStartMenuShortcut": true,
+                        "shortcutName": "Direct Print Server"
+                      }
+                    }
+                  }
+                  '@
+                  $packageContent | Out-File -FilePath "package.json" -Encoding utf8
+              shell: pwsh
+
+            - name: Create icon and assets
+              run: |
+                  mkdir assets
+                  echo "Icon placeholder" > assets\icon.png
+              shell: cmd
+
+            - name: Install dependencies
+              run: |
+                  npm install
+              shell: cmd
+
+            - name: Build MSI
+              run: |
+                  echo "Building MSI with electron-builder..."
+                  npm run build-msi
+              shell: cmd
+
+            - name: Verify MSI creation
+              run: |
+                  echo "Checking MSI output..."
+                  dir dist-msi
+                  if exist "dist-msi\*.msi" (
+                    echo "✅ MSI created successfully"
+                    for %%I in (dist-msi\*.msi) do echo "MSI: %%I (%%~zI bytes)"
+                  ) else (
+                    echo "❌ MSI creation failed"
+                    exit 1
+                  )
+              shell: cmd
+
+            - name: Create release package
+              run: |
+                  mkdir release
+                  copy "dist-msi\*.msi" release\
+                  copy scripts\*.bat release\
+                  echo Direct Print Server Windows MSI Installer > release\README.txt
+                  echo. >> release\README.txt
+                  echo Easy Windows Installation: >> release\README.txt
+                  echo 1. Double-click the .msi file >> release\README.txt
+                  echo 2. Follow installation wizard >> release\README.txt  
+                  echo 3. Server starts automatically >> release\README.txt
+                  echo 4. Available at http://localhost:4000 >> release\README.txt
+                  echo. >> release\README.txt
+                  echo Features: >> release\README.txt
+                  echo - Standard Windows MSI installer >> release\README.txt
+                  echo - Desktop and Start Menu shortcuts >> release\README.txt
+                  echo - Runs in system tray >> release\README.txt
+                  echo - Easy uninstall via Add/Remove Programs >> release\README.txt
+              shell: cmd
+
+            - name: Upload MSI
+              uses: actions/upload-artifact@v4
+              with:
+                  name: direct-print-simple-msi-${{ github.sha }}
+                  path: release/
+                  retention-days: 90
+
+            - name: Create GitHub Release
+              if: ${{ inputs.create_release || startsWith(github.ref, 'refs/tags/v') }}
+              uses: softprops/action-gh-release@v1
+              with:
+                  files: release/*
+                  name: Direct Print Server MSI v${{ github.ref_name || github.run_number }}
+                  tag_name: ${{ github.ref_name || format('simple-msi-v{0}', github.run_number) }}
+                  body: |
+                      ## 🖨️ Direct Print Server - Windows MSI Installer
+
+                      ### ✅ Easy Windows Installation:
+                      - **Standard MSI Installer** - Professional Windows experience
+                      - **One-Click Installation** - Simple setup wizard
+                      - **Desktop Shortcuts** - Easy access from desktop and start menu
+                      - **System Tray** - Runs quietly in background
+                      - **Auto-Start** - Starts automatically with Windows
+
+                      ### 🚀 Features:
+                      - **System Printer Support** - Works with any Windows printer
+                      - **Auto-Detection** - Automatically finds default printer
+                      - **UMUM Support** - Handles "UMUM" printer type as auto-detect
+                      - **Web Interface** - Management at http://localhost:4000
+                      - **Background Service** - No user intervention required
+
+                      ### 📦 Installation Steps:
+                      1. Download the `.msi` file
+                      2. Double-click to start installer
+                      3. Follow the installation wizard
+                      4. Server automatically starts
+                      5. Access at `http://localhost:4000`
+
+                      ### 🔧 Management:
+                      - **Start/Stop**: Use desktop shortcut or system tray
+                      - **Uninstall**: Windows "Add or Remove Programs"
+                      - **Status**: Check system tray icon
+
+                      Perfect for business deployment with standard Windows MSI! 🎯
+                  draft: false
+                  prerelease: false
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

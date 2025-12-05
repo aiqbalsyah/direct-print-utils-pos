@@ -1,0 +1,112 @@
+name: Build Direct Print for Windows
+
+on:
+    push:
+        branches: [main, master]
+        tags: ["v*"]
+    pull_request:
+        branches: [main, master]
+    workflow_dispatch:
+
+jobs:
+    build-windows:
+        runs-on: windows-latest
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "18.18.0"
+                  cache: "npm"
+
+            - name: Setup Python for native modules
+              uses: actions/setup-python@v4
+              with:
+                  python-version: "3.x"
+
+            - name: Setup MSBuild
+              uses: microsoft/setup-msbuild@v1.3
+
+            - name: Install dependencies
+              run: |
+                  npm ci
+                  npm install -g pkg
+              shell: cmd
+
+            - name: Build Windows executable
+              run: |
+                  echo "Building Direct Print for Windows..."
+                  npm run build-win
+              shell: cmd
+
+            - name: Copy startup scripts
+              run: |
+                  copy scripts\*.bat dist\
+              shell: cmd
+
+            - name: Test executable
+              run: |
+                  echo "Testing executable..."
+                  dir dist\
+                  if exist "dist\direct-print-win.exe" (
+                    echo "✅ Build successful"
+                  ) else (
+                    echo "❌ Build failed"
+                    exit 1
+                  )
+              shell: cmd
+
+            - name: Create deployment package
+              run: |
+                  echo "Creating deployment package..."
+                  mkdir release
+                  copy dist\direct-print-win.exe release\
+                  copy dist\*.bat release\
+                  echo "Direct Print Windows Deployment Package" > release\README.txt
+                  echo "1. Run install-startup.bat as Administrator to install auto-startup" >> release\README.txt
+                  echo "2. Or run direct-print-win.exe manually" >> release\README.txt
+                  echo "3. Server will be available at http://localhost:4000" >> release\README.txt
+              shell: cmd
+
+            - name: Upload Windows executable
+              uses: actions/upload-artifact@v4
+              with:
+                  name: direct-print-windows-${{ github.sha }}
+                  path: release/
+                  retention-days: 30
+
+            - name: Create Release (on tag)
+              if: startsWith(github.ref, 'refs/tags/v')
+              uses: softprops/action-gh-release@v1
+              with:
+                  files: |
+                      dist/direct-print-win.exe
+                      dist/*.bat
+                  name: Direct Print ${{ github.ref_name }}
+                  body: |
+                      ## Direct Print Windows Release
+
+                      ### Features:
+                      - ✅ Automatic printer detection
+                      - ✅ System printer support (Windows-compatible)
+                      - ✅ "UMUM" printer type auto-detection
+                      - ✅ Auto-startup capability
+                      - ✅ No Node.js installation required
+
+                      ### Installation:
+                      1. Download `direct-print-win.exe`
+                      2. Download startup scripts (`*.bat` files)
+                      3. Run `install-startup.bat` as Administrator for auto-startup
+                      4. Server available at `http://localhost:4000`
+
+                      ### Windows System Requirements:
+                      - Windows 10/11
+                      - At least one printer installed
+                      - No additional software required
+                  draft: false
+                  prerelease: false
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

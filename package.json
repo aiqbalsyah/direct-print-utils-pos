@@ -1,0 +1,47 @@
+{
+  "name": "direct_print_js",
+  "version": "1.0.0",
+  "bin": "./src/index.js",
+  "main": "./src/index.js",
+  "engines" : {
+    "node": "18.18.0"
+  },
+  "description": "",
+  "scripts": {
+    "start": "node ./src/index.js",
+    "build": "pkg . -d",
+    "build-win": "pkg . --targets node18-win-x64 --output ./dist/direct-print-win.exe",
+    "build-complete": "build-complete.bat",
+    "test-build": "test-build.bat", 
+    "build-all": "pkg . --targets node18-win-x64,node18-mac-x64,node18-linux-x64 --output ./dist/",
+    "install-service": "node scripts/install-service.js",
+    "uninstall-service": "node scripts/uninstall-service.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "pkg": {
+    "scripts" : "./src/index.js",
+    "outputPath": "./dist",
+    "assets": [
+      "public/**/*",
+      "src/**/*"
+    ],
+    "targets": [
+      "node18-mac-x64",
+      "node18-win-x64",
+      "node18-linux-x64"
+    ]
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "escpos": "^3.0.0-alpha.6",
+    "escpos-usb": "^3.0.0-alpha.4",
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "usb": "^2.10.0"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}

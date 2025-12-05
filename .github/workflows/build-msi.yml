@@ -1,0 +1,260 @@
+name: Build Windows MSI Installer
+
+on:
+    push:
+        branches: [main, master]
+        tags: ["v*"]
+    pull_request:
+        branches: [main, master]
+    workflow_dispatch:
+        inputs:
+            create_release:
+                description: "Create GitHub Release"
+                required: false
+                default: false
+                type: boolean
+
+jobs:
+    build-msi:
+        runs-on: windows-latest
+        name: Build Windows MSI Installer
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js 18
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "18.18.0"
+
+            - name: Setup WiX Toolset
+              run: |
+                  echo "Installing WiX Toolset..."
+                  choco install wixtoolset -y
+                  echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" >> $GITHUB_PATH
+              shell: pwsh
+
+            - name: Create Windows-safe package.json
+              run: |
+                  echo "Creating Windows-safe configuration..."
+                  $packageContent = @"
+                  {
+                    "name": "direct_print_server",
+                    "version": "1.0.0", 
+                    "description": "Direct Print Server for Windows",
+                    "main": "./src/index.js",
+                    "dependencies": {
+                      "express": "^4.18.2",
+                      "socket.io": "^4.7.2"
+                    },
+                    "devDependencies": {
+                      "pkg": "^5.8.1"
+                    }
+                  }
+                  "@
+                  $packageContent | Out-File -FilePath "package-msi.json" -Encoding utf8
+              shell: pwsh
+
+            - name: Install dependencies
+              run: |
+                  copy package-msi.json package.json
+                  npm install
+                  npm install -g pkg
+              shell: cmd
+
+            - name: Build executable
+              run: |
+                  echo "Building executable..."
+                  pkg . --targets node18-win-x64 --output ./build/DirectPrintServer.exe
+              shell: cmd
+
+            - name: Create installation structure
+              run: |
+                  mkdir installer
+                  mkdir installer\bin
+                  mkdir installer\scripts
+                  copy build\DirectPrintServer.exe installer\bin\
+                  copy scripts\*.bat installer\scripts\
+                  echo Direct Print Server > installer\README.txt
+              shell: cmd
+
+            - name: Create WiX configuration
+              run: |
+                  $wixContent = @'
+                  <?xml version="1.0" encoding="UTF-8"?>
+                  <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+                    <Product Id="*" Name="Direct Print Server" Language="1033" Version="1.0.0" 
+                             Manufacturer="Direct Print Solutions" UpgradeCode="12345678-1234-5678-9012-123456789012">
+                      
+                      <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+                      <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
+                      <MediaTemplate EmbedCab="yes" />
+                      
+                      <Feature Id="ProductFeature" Title="Direct Print Server" Level="1">
+                        <ComponentGroupRef Id="ProductComponents" />
+                      </Feature>
+                      
+                      <Directory Id="TARGETDIR" Name="SourceDir">
+                        <Directory Id="ProgramFilesFolder">
+                          <Directory Id="INSTALLFOLDER" Name="DirectPrintServer" />
+                        </Directory>
+                        <Directory Id="StartupFolder" />
+                      </Directory>
+                      
+                      <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+                        <Component Id="MainExecutable" Guid="11111111-1111-1111-1111-111111111111">
+                          <File Id="DirectPrintServerEXE" Source="installer\bin\DirectPrintServer.exe" KeyPath="yes" />
+                          <ServiceInstall Id="DirectPrintService"
+                                         Type="ownProcess"
+                                         Name="DirectPrintService"
+                                         DisplayName="Direct Print Server"
+                                         Description="Automatic printer service for direct printing"
+                                         Start="auto"
+                                         Account="LocalSystem"
+                                         ErrorControl="normal" />
+                          <ServiceControl Id="StartDirectPrintService" Start="install" Stop="both" Remove="uninstall" Name="DirectPrintService" Wait="yes" />
+                        </Component>
+                        
+                        <Component Id="StartupScript" Guid="22222222-2222-2222-2222-222222222222">
+                          <File Id="InstallStartupBat" Source="installer\scripts\install-startup.bat" />
+                          <File Id="StartupBat" Source="installer\scripts\startup.bat" />
+                          <File Id="UninstallStartupBat" Source="installer\scripts\uninstall-startup.bat" />
+                        </Component>
+                        
+                        <Component Id="StartupShortcut" Guid="33333333-3333-3333-3333-333333333333">
+                          <Shortcut Id="StartupShortcut"
+                                   Directory="StartupFolder"
+                                   Name="DirectPrintServer"
+                                   Target="[INSTALLFOLDER]DirectPrintServer.exe"
+                                   WorkingDirectory="INSTALLFOLDER"
+                                   Icon="AppIcon"
+                                   IconIndex="0"
+                                   Description="Direct Print Server - Auto Start" />
+                          <RegistryValue Root="HKCU"
+                                        Key="SOFTWARE\DirectPrintServer"
+                                        Name="installed"
+                                        Type="integer"
+                                        Value="1"
+                                        KeyPath="yes" />
+                        </Component>
+                      </ComponentGroup>
+                      
+                      <Icon Id="AppIcon" SourceFile="installer\bin\DirectPrintServer.exe" />
+                      
+                      <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+                      <UIRef Id="WixUI_InstallDir" />
+                      <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
+                      
+                    </Product>
+                  </Wix>
+                  '@
+                  $wixContent | Out-File -FilePath "DirectPrintServer.wxs" -Encoding utf8
+              shell: pwsh
+
+            - name: Create license file
+              run: |
+                  echo "{\rtf1\ansi\deff0 {\fonttbl {\f0 Times New Roman;}} \f0\fs24 Direct Print Server License Agreement\par\par This software is provided as-is for printer management.\par }" > license.rtf
+              shell: cmd
+
+            - name: Build MSI with WiX
+              run: |
+                  echo "Compiling WiX..."
+                  candle DirectPrintServer.wxs -out DirectPrintServer.wixobj
+                  echo "Linking MSI..."
+                  light DirectPrintServer.wixobj -out DirectPrintServer.msi -ext WixUIExtension
+              shell: cmd
+
+            - name: Sign MSI (if certificate available)
+              if: env.CERTIFICATE_BASE64 != null
+              run: |
+                  echo "Signing MSI..."
+                  # Note: Add signing logic here if you have a code signing certificate
+                  echo "MSI signing skipped - no certificate provided"
+              shell: cmd
+              env:
+                  CERTIFICATE_BASE64: ${{ secrets.CERTIFICATE_BASE64 }}
+
+            - name: Test MSI
+              run: |
+                  echo "Testing MSI file..."
+                  if exist "DirectPrintServer.msi" (
+                    echo "✅ MSI created successfully"
+                    for %%I in (DirectPrintServer.msi) do echo "MSI size: %%~zI bytes"
+                  ) else (
+                    echo "❌ MSI creation failed"
+                    exit 1
+                  )
+              shell: cmd
+
+            - name: Create release package
+              run: |
+                  mkdir release
+                  copy DirectPrintServer.msi release\
+                  copy installer\scripts\*.bat release\
+                  echo Direct Print Server Windows Installer > release\README.txt
+                  echo. >> release\README.txt
+                  echo Installation Instructions: >> release\README.txt
+                  echo 1. Double-click DirectPrintServer.msi >> release\README.txt
+                  echo 2. Follow the installation wizard >> release\README.txt
+                  echo 3. Service will auto-start on Windows boot >> release\README.txt
+                  echo 4. Server available at http://localhost:4000 >> release\README.txt
+                  echo. >> release\README.txt
+                  echo Features: >> release\README.txt
+                  echo - Windows Service integration >> release\README.txt
+                  echo - Auto-startup on boot >> release\README.txt
+                  echo - Professional Windows installer >> release\README.txt
+                  echo - Easy uninstallation >> release\README.txt
+              shell: cmd
+
+            - name: Upload MSI artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: direct-print-msi-${{ github.sha }}
+                  path: release/
+                  retention-days: 90
+
+            - name: Create Release
+              if: ${{ inputs.create_release || startsWith(github.ref, 'refs/tags/v') }}
+              uses: softprops/action-gh-release@v1
+              with:
+                  files: |
+                      DirectPrintServer.msi
+                      release/*.bat
+                  name: Direct Print Server v${{ github.ref_name || github.run_number }}
+                  tag_name: ${{ github.ref_name || format('msi-v{0}', github.run_number) }}
+                  body: |
+                      ## 🖨️ Direct Print Server - Windows MSI Installer
+
+                      ### ✅ Professional Windows Installation:
+                      - **MSI Installer** - Standard Windows installation experience
+                      - **Windows Service** - Runs as system service
+                      - **Auto-Startup** - Automatically starts on Windows boot
+                      - **Add/Remove Programs** - Proper Windows integration
+                      - **No Dependencies** - Self-contained installation
+
+                      ### 🚀 Features:
+                      - **System Printer Support** - Works with any Windows printer
+                      - **Automatic Detection** - Finds and uses default printer
+                      - **UMUM Support** - Handles "UMUM" printer type
+                      - **Background Service** - Runs silently in background
+                      - **Web Interface** - Available at http://localhost:4000
+
+                      ### 📦 Installation:
+                      1. Download `DirectPrintServer.msi`
+                      2. Double-click to install
+                      3. Follow installation wizard
+                      4. Service automatically starts
+                      5. Server ready at `http://localhost:4000`
+
+                      ### 🔧 Uninstallation:
+                      - Use Windows "Add or Remove Programs"
+                      - Or run: `msiexec /uninstall DirectPrintServer.msi`
+
+                      ### 💡 Perfect for enterprise deployment!
+                      This MSI installer provides professional Windows integration with
+                      proper service management and easy deployment via Group Policy.
+                  draft: false
+                  prerelease: false
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

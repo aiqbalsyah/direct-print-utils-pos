@@ -1,0 +1,629 @@
+const express = require('express');
+const { createServer } = require('node:http');
+const { join } = require('node:path');
+const { Server } = require('socket.io');
+const os = require('os');
+const { exec } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+const app = express();
+const server = createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*", // Allow all origins for development
+    methods: ["GET", "POST"]
+  }
+});
+const escpos = require('escpos');
+
+// Add CORS middleware for Express
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  next();
+});
+
+// Add JSON parsing middleware
+app.use(express.json());
+
+// Serve static files
+app.use(express.static(path.join(__dirname, '../public')));
+
+// Initialize USB adapter with proper error handling for Windows
+let USBAdapter = null;
+let usbAvailable = false;
+
+try {
+  // Only try to load USB on non-Windows or when specifically requested
+  if (os.platform() !== 'win32') {
+    USBAdapter = require('escpos-usb');
+    escpos.USB = USBAdapter;
+    usbAvailable = true;
+    console.log('USB printing enabled for', os.platform());
+  } else {
+    console.log('Windows detected - USB printing disabled, using system printers only');
+    console.log('This avoids the "usb.on is not a function" error on Windows');
+  }
+} catch (error) {
+  console.log('USB printing not available:', error.message);
+  console.log('Using system printers only - this is normal on Windows');
+}
+
+// Function to detect available printers
+function detectAvailablePrinters(callback) {
+  let command;
+  
+  if (os.platform() === 'win32') {
+    // Windows: Use wmic to list printers
+    command = 'wmic printer list brief';
+  } else if (os.platform() === 'darwin') {
+    // macOS: Use lpstat to list printers
+    command = 'lpstat -p';
+  } else {
+    // Linux: Use lpstat to list printers
+    command = 'lpstat -p';
+  }
+  
+  exec(command, (error, stdout, stderr) => {
+    if (error) {
+      console.log('Could not detect system printers:', error.message);
+      return callback([]);
+    }
+    
+    const printers = [];
+    const lines = stdout.split('\n').filter(line => line.trim());
+    
+    if (os.platform() === 'win32') {
+      // Parse Windows printer output
+      lines.forEach((line, index) => {
+        if (index > 0 && line.includes('TRUE')) { // Skip header, get only available printers
+          const parts = line.split(/\s+/);
+          if (parts[0]) printers.push(parts[0]);
+        }
+      });
+    } else {
+      // Parse Unix-like printer output
+      lines.forEach(line => {
+        const match = line.match(/printer\s+(.+?)\s+/);
+        if (match) printers.push(match[1]);
+      });
+    }
+    
+    callback(printers);
+  });
+}
+
+// Function to get default printer
+function getDefaultPrinter(callback) {
+  let command;
+  
+  if (os.platform() === 'win32') {
+    command = 'wmic printer where "Default=TRUE" get Name /value';
+  } else {
+    command = 'lpstat -d';
+  }
+  
+  exec(command, (error, stdout, stderr) => {
+    if (error) {
+      console.log('Could not get default printer:', error.message);
+      return callback(null);
+    }
+    
+    let defaultPrinter = null;
+    
+    if (os.platform() === 'win32') {
+      const match = stdout.match(/Name=(.+)/);
+      if (match) defaultPrinter = match[1].trim();
+    } else {
+      const match = stdout.match(/system default destination: (.+)/);
+      if (match) defaultPrinter = match[1].trim();
+    }
+    
+    callback(defaultPrinter);
+  });
+}
+
+// Function to check if USB printer is available, with fallback to system printer
+function checkPrinterAvailability(callback) {
+  // On Windows, skip USB entirely and go straight to system printers
+  if (os.platform() === 'win32' || !usbAvailable) {
+    console.log('Checking system printers (USB skipped on Windows)...');
+    
+    detectAvailablePrinters((printers) => {
+      if (printers.length > 0) {
+        console.log('Found system printers:', printers);
+        getDefaultPrinter((defaultPrinter) => {
+          const printerToUse = defaultPrinter || printers[0];
+          console.log(`Using system printer: ${printerToUse}`);
+          callback({ 
+            type: 'system', 
+            printer: printerToUse, 
+            available: true 
+          });
+        });
+      } else {
+        console.log('No printers found on system');
+        callback({ 
+          type: 'none', 
+          printer: null, 
+          available: false,
+          message: 'No printers found. Please install a printer.'
+        });
+      }
+    });
+    return;
+  }
+  
+  // Try USB printer first (non-Windows only)
+  try {
+    const device = new escpos.USB();
+    callback({ 
+      type: 'usb', 
+      printer: 'USB Printer', 
+      available: true 
+    });
+  } catch (usbError) {
+    console.log('USB printer not available, checking system printers...');
+    
+    detectAvailablePrinters((printers) => {
+      if (printers.length > 0) {
+        getDefaultPrinter((defaultPrinter) => {
+          const printerToUse = defaultPrinter || printers[0];
+          console.log(`Fallback to system printer: ${printerToUse}`);
+          callback({ 
+            type: 'system', 
+            printer: printerToUse, 
+            available: true 
+          });
+        });
+      } else {
+        callback({ 
+          type: 'none', 
+          printer: null, 
+          available: false,
+          message: 'No USB or system printers available. Please set up a printer.'
+        });
+      }
+    });
+  }
+}
+
+// Helper function to get USB device with Windows compatibility
+function getUSBDevice() {
+  if (!escpos.USB) {
+    throw new Error('USB adapter not available');
+  }
+  
+  try {
+    // For Windows, try to get device with additional error handling
+    if (os.platform() === 'win32') {
+      const device = new escpos.USB();
+      
+      // Override the device's open method to handle Windows-specific issues
+      const originalOpen = device.open.bind(device);
+      device.open = function(callback) {
+        try {
+          return originalOpen(callback);
+        } catch (error) {
+          if (error.message.includes('usb.on is not a function')) {
+            console.error('Windows USB issue detected, trying alternative approach...');
+            // Return a more descriptive error
+            return callback(new Error('USB device not properly initialized on Windows. Please check driver installation.'));
+          }
+          return callback(error);
+        }
+      };
+      
+      return device;
+    } else {
+      return new escpos.USB();
+    }
+  } catch (error) {
+    throw new Error(`Failed to create USB device: ${error.message}`);
+  }
+}
+
+// Enhanced function to print with specific printer type preference
+function printSendWithType(cmds, printerType, callback) {
+  const res = {};
+  
+  console.log(`Print request for printer type: ${printerType}`);
+  
+  // Convert "UMUM" to "auto" for auto-detection
+  if (printerType && printerType.toUpperCase() === 'UMUM') {
+    printerType = 'auto';
+    console.log('UMUM printer type converted to auto-detection');
+  }
+  
+  // If specific printer type is requested, try that first
+  if (printerType && printerType !== 'auto') {
+    // Check if the requested printer exists in system printers
+    detectAvailablePrinters((printers) => {
+      const requestedPrinter = printers.find(p => 
+        p.toLowerCase().includes(printerType.toLowerCase()) ||
+        printerType.toLowerCase().includes(p.toLowerCase())
+      );
+      
+      if (requestedPrinter) {
+        console.log(`Using requested printer: ${requestedPrinter}`);
+        printWithSystemPrinter(cmds, requestedPrinter, callback);
+        return;
+      } else {
+        console.log(`Requested printer '${printerType}' not found, using auto-detection`);
+        // Fall back to auto-detection
+        printSend(cmds, callback);
+      }
+    });
+  } else {
+    // Use auto-detection
+    printSend(cmds, callback);
+  }
+}
+
+// Function to print directly to a specific system printer
+function printWithSystemPrinter(cmds, printerName, callback) {
+  const res = {};
+  
+  console.log(`Printing to system printer: ${printerName}`);
+  
+  try {
+    // Create a temporary file and use system print command
+    const tempFile = path.join(os.tmpdir(), `print_${Date.now()}.txt`);
+    
+    fs.writeFileSync(tempFile, cmds);
+    
+    let printCommand;
+    if (os.platform() === 'win32') {
+      printCommand = `print /D:"${printerName}" "${tempFile}"`;
+    } else {
+      printCommand = `lp -d "${printerName}" "${tempFile}"`;
+    }
+    
+    exec(printCommand, (error, stdout, stderr) => {
+      // Clean up temp file
+      try { fs.unlinkSync(tempFile); } catch(e) {}
+      
+      if (error) {
+        console.error('System print error:', error);
+        res.message = `ERROR PRINTING TO ${printerName}: ${error.message}`;
+        res.status = 500;
+      } else {
+        res.message = `BERHASIL MENCETAK DATA (${printerName})`;
+        res.status = 200;
+      }
+      return callback(res);
+    });
+  } catch (e) {
+    console.error(`ERROR SYSTEM PRINTER: ${e}`);
+    res.message = `ERROR SYSTEM PRINTER: ${e.message}`;
+    res.status = 500;
+    return callback(res);
+  }
+}
+
+function printSend(cmds, callback) {
+  const res = {};
+
+  // Check printer availability automatically
+  checkPrinterAvailability((printerInfo) => {
+    if (!printerInfo.available) {
+      console.error("No printer available:", printerInfo.message);
+      res.message = printerInfo.message || "NO PRINTER AVAILABLE";
+      res.status = 500;
+      return callback(res);
+    }
+
+    if (printerInfo.type === 'usb') {
+      // Use USB printer
+      try {
+        const options = { encoding: "GB18030" };
+        const device = getUSBDevice();
+        const printer = new escpos.Printer(device, options);
+
+        device.open((error) => {
+          if (error) {
+            console.error("Error saat membuka perangkat printer:", error);
+            res.message = `ERROR MEMBUKA PERANGKAT PRINTER: ${error.message}`;
+            res.status = 500;
+            return callback(res);
+          }
+
+          try {
+            printer.text(cmds).close();
+            res.message = "BERHASIL MENCETAK DATA (USB)";
+            res.status = 200;
+            return callback(res);
+          } catch (printError) {
+            console.error("Error saat mencetak data:", printError);
+            res.message = "ERROR MENCETAK DATA";
+            res.status = 500;
+            return callback(res);
+          }
+        });
+      } catch (e) {
+        console.error(`ERROR CONNECTION PRINTER: ${e}`);
+        res.message = `ERROR CONNECTION PRINTER: ${e.message}`;
+        res.status = 500;
+        return callback(res);
+      }
+    } else if (printerInfo.type === 'system') {
+      // Use system printer (fallback)
+      console.log(`Using system printer: ${printerInfo.printer}`);
+      
+      // For system printers, we'll use a different approach
+      // This could be enhanced to use node-printer or other system printing libraries
+      try {
+        // Create a temporary file and use system print command
+        const tempFile = path.join(os.tmpdir(), `print_${Date.now()}.txt`);
+        
+        fs.writeFileSync(tempFile, cmds);
+        
+        let printCommand;
+        if (os.platform() === 'win32') {
+          printCommand = `print /D:"${printerInfo.printer}" "${tempFile}"`;
+        } else {
+          printCommand = `lp -d "${printerInfo.printer}" "${tempFile}"`;
+        }
+        
+        exec(printCommand, (error, stdout, stderr) => {
+          // Clean up temp file
+          try { fs.unlinkSync(tempFile); } catch(e) {}
+          
+          if (error) {
+            console.error('System print error:', error);
+            res.message = `ERROR SYSTEM PRINT: ${error.message}`;
+            res.status = 500;
+          } else {
+            res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
+            res.status = 200;
+          }
+          return callback(res);
+        });
+      } catch (e) {
+        console.error(`ERROR SYSTEM PRINTER: ${e}`);
+        res.message = `ERROR SYSTEM PRINTER: ${e.message}`;
+        res.status = 500;
+        return callback(res);
+      }
+    }
+  });
+}
+
+function printResi(data, callback) {
+  const res = {};
+
+  // Check printer availability automatically
+  checkPrinterAvailability((printerInfo) => {
+    if (!printerInfo.available) {
+      console.error("No printer available:", printerInfo.message);
+      res.message = printerInfo.message || "NO PRINTER AVAILABLE";
+      res.status = 500;
+      return callback(res);
+    }
+
+    if (printerInfo.type === 'usb') {
+      // Use USB printer for receipt
+      try {
+        const options = { encoding: "GB18030" };
+        const device = getUSBDevice();
+        const printer = new escpos.Printer(device, options);
+
+        device.open((error) => {
+          if (error) {
+            console.error("Error saat membuka perangkat printer:", error);
+            res.message = `ERROR MEMBUKA PERANGKAT PRINTER: ${error.message}`;
+            res.status = 500;
+            return callback(res);
+          }
+
+          try {
+            var noResi = data.code;
+            var receiptName = data.receipt;
+            var productName = data.product;
+            console.log(noResi);
+            printer
+              .font('a')
+              .align('LT')
+              .print(`${"\x1b\x21\x00"}`)
+              .print(`NO RESI : ${noResi}`)
+              .newLine()
+              .print(`PENERIMA : ${receiptName}`)
+              .newLine()
+              .print(productName)
+              .newLine()
+              .align('ct')
+              // .barcode(noResi, 'CODE128')
+              .qrcode(noResi)
+              .size(1, 1)
+              .text(noResi)
+              .newLine()
+              .newLine()
+              .newLine()
+              .cut()
+              .close();
+            res.message = "BERHASIL MENCETAK DATA (USB)";
+            res.status = 200;
+            return callback(res);
+          } catch (printError) {
+            console.error("Error saat mencetak data:", printError);
+            res.message = "ERROR MENCETAK DATA";
+            res.status = 500;
+            return callback(res);
+          }
+        });
+      } catch (e) {
+        console.error(`ERROR CONNECTION PRINTER: ${e}`);
+        res.message = `ERROR CONNECTION PRINTER: ${e.message}`;
+        res.status = 500;
+        return callback(res);
+      }
+    } else if (printerInfo.type === 'system') {
+      // Use system printer for receipt (simplified version)
+      console.log(`Using system printer for receipt: ${printerInfo.printer}`);
+      
+      try {
+        var noResi = data.code;
+        var receiptName = data.receipt;
+        var productName = data.product;
+        
+        // Create simplified receipt text for system printer
+        const receiptText = `
+=============================
+           RECEIPT           
+=============================
+NO RESI : ${noResi}
+PENERIMA : ${receiptName}
+${productName}
+=============================
+           ${noResi}        
+=============================
+
+
+`;
+        
+        const tempFile = path.join(os.tmpdir(), `receipt_${Date.now()}.txt`);
+        
+        fs.writeFileSync(tempFile, receiptText);
+        
+        let printCommand;
+        if (os.platform() === 'win32') {
+          printCommand = `print /D:"${printerInfo.printer}" "${tempFile}"`;
+        } else {
+          printCommand = `lp -d "${printerInfo.printer}" "${tempFile}"`;
+        }
+        
+        exec(printCommand, (error, stdout, stderr) => {
+          // Clean up temp file
+          try { fs.unlinkSync(tempFile); } catch(e) {}
+          
+          if (error) {
+            console.error('System print error:', error);
+            res.message = `ERROR SYSTEM PRINT: ${error.message}`;
+            res.status = 500;
+          } else {
+            res.message = `BERHASIL MENCETAK RECEIPT (${printerInfo.printer})`;
+            res.status = 200;
+          }
+          return callback(res);
+        });
+      } catch (e) {
+        console.error(`ERROR SYSTEM PRINTER: ${e}`);
+        res.message = `ERROR SYSTEM PRINTER: ${e.message}`;
+        res.status = 500;
+        return callback(res);
+      }
+    }
+  });
+}
+// Endpoint to get print data (mimics the sales/view endpoint structure)
+app.get('/sales/view/:idTrx.txt', (req, res) => {
+  const idTrx = req.params.idTrx;
+  const printerType = req.query.printerType || 'auto';
+  // Convert "UMUM" to "auto" for auto-detection
+  const normalizedPrinterType = printerType.toUpperCase() === 'UMUM' ? 'auto' : printerType;
+  const struckType = req.query.struckType || 'true';
+  
+  console.log(`Print request for transaction: ${idTrx}, printer: ${printerType} (normalized: ${normalizedPrinterType}), type: ${struckType}`);
+  
+  // Here you would normally get the transaction data from database
+  // For now, return sample receipt data
+  const receiptData = `
+=============================
+         RECEIPT           
+=============================
+TRX ID    : ${idTrx}
+DATE      : ${new Date().toLocaleDateString()}
+TIME      : ${new Date().toLocaleTimeString()}
+PRINTER   : ${normalizedPrinterType}
+TYPE      : ${struckType}
+=============================
+ITEM                   QTY  
+Product Sample          1   
+Sub Total          : 10.00
+Tax               :  1.00
+Total             : 11.00
+=============================
+      Thank You!        
+=============================
+
+
+`;
+  
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(receiptData);
+});
+
+// Endpoint to check printer status
+app.get('/printer-status', (req, res) => {
+  checkPrinterAvailability((printerInfo) => {
+    res.json({
+      available: printerInfo.available,
+      type: printerInfo.type,
+      printer: printerInfo.printer,
+      message: printerInfo.message || 'Printer ready'
+    });
+  });
+});
+
+// Endpoint to list all available printers
+app.get('/printers', (req, res) => {
+  detectAvailablePrinters((printers) => {
+    getDefaultPrinter((defaultPrinter) => {
+      res.json({
+        printers: printers,
+        defaultPrinter: defaultPrinter,
+        usbAvailable: usbAvailable && os.platform() !== 'win32',
+        platform: os.platform(),
+        windowsSystemPrinterOnly: os.platform() === 'win32'
+      });
+    });
+  });
+});
+
+app.get('/', (req, res) => {
+  var dataSend = req.query;
+  console.log(dataSend);
+  printResi(dataSend, (result) => {
+      console.log(result);
+    });
+  res.send('Hello World! - Direct Print Server with Auto Printer Detection')
+})
+
+io.on('connection', (socket) => {
+  console.log('a user connected');
+  
+  socket.on('print', (data) => {
+    console.log('Print request received:', data);
+    
+    // Extract printer type and data from frontend request
+    let printerType = data.printerType || 'auto'; // Default to auto-detection
+    
+    // Convert "UMUM" to "auto" for auto-detection
+    if (printerType.toUpperCase() === 'UMUM') {
+      printerType = 'auto';
+      console.log('UMUM printer type detected, using auto-detection');
+    }
+    
+    const dataPrint = data.dataPrint;
+    
+    if (!dataPrint) {
+      socket.emit('print-response', {
+        message: 'NO DATA TO PRINT',
+        status: 400
+      });
+      return;
+    }
+    
+    // Use the enhanced printSend function with printer type preference
+    printSendWithType(dataPrint, printerType, (result) => {
+      console.log('Print result:', result);
+      socket.emit('print-response', result);
+    });
+  });
+});
+
+server.listen(4000, () => {
+  console.log('server running at http://localhost:4000');
+});

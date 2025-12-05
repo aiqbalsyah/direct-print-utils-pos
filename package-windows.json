@@ -1,0 +1,34 @@
+{
+  "name": "direct_print_js_windows",
+  "version": "1.0.0",
+  "bin": "./src/index.js",
+  "main": "./src/index.js",
+  "engines" : {
+    "node": "18.18.0"
+  },
+  "description": "Windows-optimized direct print server without USB dependencies",
+  "scripts": {
+    "start": "node ./src/index.js",
+    "build-win-safe": "pkg . --targets node18-win-x64 --output ./dist/direct-print-windows-safe.exe"
+  },
+  "pkg": {
+    "scripts" : "./src/index.js",
+    "outputPath": "./dist",
+    "assets": [
+      "public/**/*",
+      "src/**/*"
+    ],
+    "targets": [
+      "node18-win-x64"
+    ]
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}
