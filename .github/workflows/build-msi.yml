@@ -30,71 +30,33 @@ jobs:
                   echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" >> $GITHUB_PATH
               shell: pwsh
 
-            - name: Install dependencies and build tool
+            - name: Install dependencies
               run: |
                   echo "Installing dependencies..."
-                  npm config set registry https://registry.npmjs.org/
-                  npm config set fetch-retries 3
-                  npm ci --prefer-offline --no-audit --no-fund || npm install --no-audit --no-fund
-
-                  echo "Trying to install pkg from different sources..."
-                  npm install pkg@5.8.1 --save-dev --no-audit --no-fund || (
-                    echo "pkg installation failed, using alternative approach..."
-                    echo "Creating standalone Node.js bundle instead..."
-                  )
+                  npm install
               shell: cmd
 
-            - name: Build executable
+            - name: Build using existing script
               run: |
-                  echo "Building executable..."
-                  mkdir build 2>nul || echo "Build directory exists"
-
-                  REM Try pkg first
-                  npx pkg . --targets node18-win-x64 --output ./build/DirectPrintServer.exe && (
-                    echo "✅ Built with pkg successfully"
-                    goto :built
-                  ) || (
-                    echo "pkg failed, creating Node.js wrapper..."
-                  )
-
-                  REM Fallback: Create a batch wrapper that runs Node.js
-                  echo @echo off > build\DirectPrintServer.bat
-                  echo cd /d "%%~dp0" >> build\DirectPrintServer.bat
-                  echo node .\src\index.js >> build\DirectPrintServer.bat
-
-                  REM Copy Node.js files to distribution
-                  xcopy /E /I /Y src build\src\
-                  xcopy /E /I /Y public build\public\
-                  copy package.json build\
-                  copy package-lock.json build\ 2>nul || echo "No package-lock.json"
-
-                  REM Create PowerShell wrapper as alternative
-                  echo $ErrorActionPreference = "Stop" > build\DirectPrintServer.ps1
-                  echo Set-Location $PSScriptRoot >> build\DirectPrintServer.ps1
-                  echo node .\src\index.js >> build\DirectPrintServer.ps1
-
-                  echo "✅ Created Node.js distribution bundle"
-
-                  :built
-                  echo "Build completed successfully"
+                  echo "Building with build-complete.bat..."
+                  set CI=true
+                  call build-complete.bat
               shell: cmd
 
-            - name: Create installation structure
+            - name: Prepare MSI structure
               run: |
-                  mkdir installer
-                  mkdir installer\bin
-                  mkdir installer\scripts
+                  echo "Preparing files for MSI creation..."
+                  mkdir installer 2>nul || echo "installer exists"
+                  mkdir installer\bin 2>nul || echo "installer\bin exists"
+                  mkdir installer\scripts 2>nul || echo "installer\scripts exists"
 
-                  REM Copy executable or Node.js bundle
-                  if exist build\DirectPrintServer.exe (
-                    copy build\DirectPrintServer.exe installer\bin\
-                  ) else (
-                    echo "Copying Node.js bundle..."
-                    xcopy /E /I /Y build installer\bin\
-                  )
+                  REM Copy built files from dist folder
+                  xcopy /E /I /Y dist installer\bin\
 
-                  copy scripts\*.bat installer\scripts\ 2>nul || echo "No batch scripts found"
-                  echo Direct Print Server > installer\README.txt
+                  REM Copy Windows-specific scripts for WiX
+                  xcopy /E /I /Y scripts\windows\wix installer\scripts\
+
+                  echo "✅ MSI structure prepared successfully"
               shell: cmd
 
             - name: Create WiX configuration
@@ -120,15 +82,21 @@ jobs:
                       </Directory>
                       
                       <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
-                        <Component Id="MainFiles" Guid="11111111-1111-1111-1111-111111111111">
-                          <CreateFolder />
-                          <RemoveFolder Id="INSTALLFOLDER" On="uninstall" />
+                        <Component Id="MainExecutable" Guid="11111111-1111-1111-1111-111111111111">
+                          <File Id="DirectPrintExe" Source="installer\bin\direct-print-win.exe" KeyPath="yes" />
+                        </Component>
+                        <Component Id="StartupScripts" Guid="22222222-2222-2222-2222-222222222222">
+                          <File Id="StartupBat" Source="installer\bin\startup.bat" />
+                          <File Id="InstallStartupBat" Source="installer\bin\install-startup.bat" />
+                          <File Id="UninstallStartupBat" Source="installer\bin\uninstall-startup.bat" />
+                          <RemoveFolder Id="INSTALLFOLDER" Directory="INSTALLFOLDER" On="uninstall" />
                           <RegistryValue Root="HKCU" Key="SOFTWARE\DirectPrintServer" Name="installed" Type="integer" Value="1" KeyPath="yes" />
                         </Component>
                       </ComponentGroup>
                       
                       <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
                       <UIRef Id="WixUI_InstallDir" />
+                      <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
                       
                     </Product>
                   </Wix>

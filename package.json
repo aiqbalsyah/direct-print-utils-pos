@@ -9,11 +9,8 @@
   "description": "",
   "scripts": {
     "start": "node ./src/index.js",
-    "build": "pkg . -d",
     "build-win": "pkg . --targets node18-win-x64 --output ./dist/direct-print-win.exe",
     "build-complete": "build-complete.bat",
-    "test-build": "test-build.bat", 
-    "build-all": "pkg . --targets node18-win-x64,node18-mac-x64,node18-linux-x64 --output ./dist/",
     "install-service": "node scripts/install-service.js",
     "uninstall-service": "node scripts/uninstall-service.js",
     "test": "echo \"Error: no test specified\" && exit 1"

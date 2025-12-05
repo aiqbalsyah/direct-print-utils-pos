@@ -30,9 +30,7 @@ echo   - Printer detection logic
 call npm run build-win
 
 echo [5/5] Creating deployment package...
-copy scripts\startup.bat dist\
-copy scripts\install-startup.bat dist\
-copy scripts\uninstall-startup.bat dist\
+xcopy /E /I /Y scripts\windows dist\scripts\
 echo.
 
 echo Verifying build output...
@@ -73,4 +71,9 @@ echo   3. Service automatically available at http://localhost:4000
 echo.
 echo ✨ The .exe is completely self-contained!
 echo.
-pause
+REM Remove pause for CI/CD compatibility
+if "%CI%"=="true" (
+    echo Build completed for CI/CD environment
+) else (
+    pause
+)
