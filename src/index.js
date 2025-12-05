@@ -337,9 +337,10 @@ function printWithSystemPrinter(cmds, printerName, callback) {
       console.log(`Attempting to print to Windows printer: ${printerName}`);
       
       // Method 1: PowerShell (recommended for modern Windows)
-      printCommand = `powershell -Command "Get-Content '${tempFile}' | Out-Printer -Name '${printerName}'"`;
+      printCommand = `powershell -Command "& {Get-Content '${tempFile}' | Out-Printer -Name '${printerName}'}"`;
       
-      exec(printCommand, (error, stdout, stderr) => {
+      // Add timeout to prevent hanging
+      const printProcess = exec(printCommand, { timeout: 10000 }, (error, stdout, stderr) => {
         if (!error) {
           console.log('✅ PowerShell print successful');
           try { fs.unlinkSync(tempFile); } catch(e) {}
@@ -350,38 +351,36 @@ function printWithSystemPrinter(cmds, printerName, callback) {
         
         console.log('⚠️ PowerShell print failed, trying notepad method:', error.message);
         
-        // Method 2: Notepad print (fallback)
-        const notepadCommand = `start /wait notepad /p "${tempFile}"`;
-        exec(notepadCommand, (notepadError, notepadStdout, notepadStderr) => {
-          if (!notepadError) {
-            console.log('✅ Notepad print method initiated');
-            setTimeout(() => {
-              try { fs.unlinkSync(tempFile); } catch(e) {}
-            }, 3000); // Wait longer for notepad to finish
-            res.message = `BERHASIL MENCETAK DATA (${printerName}) - Notepad Method`;
+        // Method 2: Simple print command (more reliable than notepad)
+        const printCmd = `print /D:"${printerName}" "${tempFile}"`;
+        exec(printCmd, (printError, printStdout, printStderr) => {
+          if (!printError) {
+            console.log('✅ Print command successful');
+            try { fs.unlinkSync(tempFile); } catch(e) {}
+            res.message = `BERHASIL MENCETAK DATA (${printerName})`;
             res.status = 200;
             return callback(res);
           }
           
-          console.log('⚠️ Notepad print failed, trying print command:', notepadError.message);
+          console.log('⚠️ Print command failed, trying copy to printer port:', printError.message);
           
-          // Method 3: Traditional print command (final fallback)
-          const printCmd = `print /D:"${printerName}" "${tempFile}"`;
-          exec(printCmd, (printError, printStdout, printStderr) => {
+          // Method 3: Copy to printer port (final fallback)
+          const copyCmd = `copy "${tempFile}" "\\\\localhost\\${printerName}"`;
+          exec(copyCmd, (copyError) => {
             try { fs.unlinkSync(tempFile); } catch(e) {}
             
-            if (printError) {
+            if (copyError) {
               console.error('❌ All Windows print methods failed. Error details:', {
                 printerName,
                 powershellError: error.message,
-                notepadError: notepadError.message,
-                printError: printError.message
+                printError: printError.message,
+                copyError: copyError.message
               });
               res.message = `ERROR: Could not print to ${printerName}. Please check if printer is available and online.`;
               res.status = 500;
             } else {
-              console.log('✅ Traditional print command successful');
-              res.message = `BERHASIL MENCETAK DATA (${printerName}) - Print Command`;
+              console.log('✅ Copy to printer port successful');
+              res.message = `BERHASIL MENCETAK DATA (${printerName})`;
               res.status = 200;
             }
             return callback(res);
@@ -748,15 +747,33 @@ io.on('connection', (socket) => {
         try {
           console.log('📄 Print result:', result);
           
+          // Ensure result has proper structure
+          const response = {
+            message: result.message || 'Unknown error',
+            status: result.status || 500
+          };
+          
           // Check if socket is still connected before emitting
           if (socket.connected) {
-            socket.emit('print-response', result);
+            socket.emit('print-response', response);
             console.log('✅ Print response sent to client');
           } else {
             console.log('⚠️ Socket disconnected, cannot send response');
           }
         } catch (emitError) {
           console.error('❌ Error sending print response:', emitError);
+          
+          // Try to send error response if socket is still connected
+          if (socket.connected) {
+            try {
+              socket.emit('print-response', {
+                message: 'SYSTEM ERROR: Could not send print response',
+                status: 500
+              });
+            } catch (fallbackError) {
+              console.error('❌ Could not send fallback error response:', fallbackError);
+            }
+          }
         }
       });
       
