@@ -352,10 +352,19 @@ function cleanEscPosCommands(rawData) {
     .trim();
   
   console.log('✅ ESC/POS commands cleaned');
-  console.log('📋 Original length:', rawData.length, 'Clean length:', cleanText.length);
-  console.log('🔍 Clean text preview:', cleanText.substring(0, 200) + '...');
-  
-  return cleanText;
+
+  try {
+    console.log('📋 Original length:', rawData?.length || 0, 'Clean length:', cleanText?.length || 0);
+    if (cleanText && typeof cleanText === 'string') {
+      const preview = cleanText.substring(0, Math.min(200, cleanText.length));
+      console.log('🔍 Clean text preview:', preview + '...');
+    }
+  } catch (logError) {
+    console.log('⚠️ Could not log cleaning details:', logError.message);
+  }
+
+  // Ensure we always return a string
+  return String(cleanText || '');
 }
 
 // Function to print directly to a specific system printer
@@ -384,53 +393,59 @@ function printWithSystemPrinter(cmds, printerName, callback) {
     
     if (os.platform() === 'win32') {
       console.log(`🚀 Attempting Windows print to: ${printerName}`);
-      
-      // Method 1: Use copy command directly to printer (most reliable for thermal printers)
-      let printCommand = `copy "${tempFile}" "\\\\localhost\\${printerName}"`;
-      
-      // Add timeout to prevent hanging
-      const printProcess = exec(printCommand, { timeout: 15000 }, (error, stdout, stderr) => {
-        if (!error) {
-          console.log('✅ Copy to printer successful');
+
+      // Method 1: Traditional print command (most compatible with Windows printers)
+      const printCmd = `print /D:"${printerName}" "${tempFile}"`;
+
+      exec(printCmd, { timeout: 15000 }, (printError, stdout, stderr) => {
+        if (!printError) {
+          console.log('✅ Print command successful');
+          console.log('stdout:', stdout);
           try { fs.unlinkSync(tempFile); } catch(e) {}
           res.message = `BERHASIL MENCETAK DATA (${printerName})`;
           res.status = 200;
           return callback(res);
         }
-        
-        console.log('⚠️ Copy method failed, trying print command:', error.message);
-        
-        // Method 2: Traditional print command
-        const printCmd = `print "${tempFile}" /D:"${printerName}"`;
-        exec(printCmd, { timeout: 15000 }, (printError, printStdout, printStderr) => {
-          if (!printError) {
-            console.log('✅ Print command successful');
+
+        console.log('⚠️ Print command failed:', printError.message);
+        console.log('stderr:', stderr);
+
+        // Method 2: PowerShell Out-Printer (modern Windows method)
+        const psCommand = `powershell -Command "& {Get-Content '${tempFile.replace(/\\/g, '\\\\')}' -Raw | Out-Printer -Name '${printerName}'}"`;
+        exec(psCommand, { timeout: 15000 }, (psError, psStdout, psStderr) => {
+          if (!psError) {
+            console.log('✅ PowerShell print successful');
             try { fs.unlinkSync(tempFile); } catch(e) {}
             res.message = `BERHASIL MENCETAK DATA (${printerName})`;
             res.status = 200;
             return callback(res);
           }
-          
-          console.log('⚠️ Print command failed, trying PowerShell:', printError.message);
-          
-          // Method 3: PowerShell method (final fallback)
-          const psCommand = `powershell -Command "& {Get-Content '${tempFile}' -Raw | Out-Printer -Name '${printerName}'}"`;
-          exec(psCommand, { timeout: 15000 }, (psError) => {
+
+          console.log('⚠️ PowerShell method failed:', psError.message);
+          console.log('psStderr:', psStderr);
+
+          // Method 3: Copy to printer port (thermal printer raw mode)
+          const copyCommand = `copy /B "${tempFile}" "\\\\localhost\\${printerName}"`;
+          exec(copyCommand, { timeout: 15000 }, (copyError, copyStdout, copyStderr) => {
             try { fs.unlinkSync(tempFile); } catch(e) {}
-            
-            if (psError) {
+
+            if (copyError) {
               console.error('❌ All Windows print methods failed. Details:', {
                 printerName,
-                copyError: error.message,
                 printError: printError.message,
                 powershellError: psError.message,
+                copyError: copyError.message,
                 tempFile: tempFile,
-                fileExists: fs.existsSync(tempFile)
+                fileExists: fs.existsSync(tempFile),
+                stderr: stderr,
+                psStderr: psStderr,
+                copyStderr: copyStderr
               });
-              res.message = `ERROR: Tidak dapat mencetak ke ${printerName}. Coba restart printer atau pilih printer lain.`;
+              res.message = `ERROR: Tidak dapat mencetak ke ${printerName}. Pastikan printer aktif dan terpasang dengan benar.`;
               res.status = 500;
             } else {
-              console.log('✅ PowerShell print successful');
+              console.log('✅ Copy to printer successful');
+              console.log('copyStdout:', copyStdout);
               res.message = `BERHASIL MENCETAK DATA (${printerName})`;
               res.status = 200;
             }
@@ -438,7 +453,7 @@ function printWithSystemPrinter(cmds, printerName, callback) {
           });
         });
       });
-      
+
     } else {
       // Unix-like systems
       const printCommand = `lp -d "${printerName}" "${tempFile}"`;
@@ -518,42 +533,98 @@ function printSend(cmds, callback) {
     } else if (printerInfo.type === 'system') {
       // Use system printer with cleaned ESC/POS commands
       console.log(`🖨️ Using system printer: ${printerInfo.printer}`);
-      
-      // Clean ESC/POS commands for system printer compatibility
-      const cleanText = cleanEscPosCommands(cmds);
-      console.log('📝 Using cleaned text for system printer');
-      
+
       try {
+        // Clean ESC/POS commands for system printer compatibility
+        const cleanText = cleanEscPosCommands(cmds);
+        console.log('📝 Using cleaned text for system printer');
+
         // Create a temporary file and use system print command
         const tempFile = path.join(os.tmpdir(), `print_${Date.now()}.txt`);
         
         fs.writeFileSync(tempFile, cleanText, 'utf8');
         console.log(`📄 Created temp file with cleaned text: ${tempFile}`);
         
-        let printCommand;
         if (os.platform() === 'win32') {
-          printCommand = `print /D:"${printerInfo.printer}" "${tempFile}"`;
+          // Windows: Use multiple fallback methods
+          console.log(`🚀 Attempting Windows print to: ${printerInfo.printer}`);
+
+          // Method 1: Traditional print command (most compatible)
+          const printCmd = `print /D:"${printerInfo.printer}" "${tempFile}"`;
+
+          exec(printCmd, { timeout: 15000 }, (printError, stdout, stderr) => {
+            if (!printError) {
+              console.log('✅ Print command successful');
+              console.log('stdout:', stdout);
+              try { fs.unlinkSync(tempFile); } catch(e) {}
+              res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
+              res.status = 200;
+              return callback(res);
+            }
+
+            console.log('⚠️ Print command failed:', printError.message);
+            console.log('stderr:', stderr);
+
+            // Method 2: PowerShell Out-Printer (modern Windows method)
+            const psCommand = `powershell -Command "& {Get-Content '${tempFile.replace(/\\/g, '\\\\')}' -Raw | Out-Printer -Name '${printerInfo.printer}'}"`;
+            exec(psCommand, { timeout: 15000 }, (psError, psStdout, psStderr) => {
+              if (!psError) {
+                console.log('✅ PowerShell print successful');
+                try { fs.unlinkSync(tempFile); } catch(e) {}
+                res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
+                res.status = 200;
+                return callback(res);
+              }
+
+              console.log('⚠️ PowerShell method failed:', psError.message);
+              console.log('psStderr:', psStderr);
+
+              // Method 3: Copy to printer port (thermal printer compatible)
+              const copyCommand = `copy /B "${tempFile}" "\\\\localhost\\${printerInfo.printer}"`;
+              exec(copyCommand, { timeout: 15000 }, (copyError, copyStdout, copyStderr) => {
+                try { fs.unlinkSync(tempFile); } catch(e) {}
+
+                if (copyError) {
+                  console.error('❌ All Windows print methods failed. Details:', {
+                    printerName: printerInfo.printer,
+                    printError: printError.message,
+                    powershellError: psError.message,
+                    copyError: copyError.message,
+                    tempFile: tempFile,
+                    fileExists: fs.existsSync(tempFile)
+                  });
+                  res.message = `ERROR: Tidak dapat mencetak ke ${printerInfo.printer}. Pastikan printer aktif dan terpasang dengan benar.`;
+                  res.status = 500;
+                } else {
+                  console.log('✅ Copy to printer successful');
+                  res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
+                  res.status = 200;
+                }
+                return callback(res);
+              });
+            });
+          });
         } else {
-          printCommand = `lp -d "${printerInfo.printer}" "${tempFile}"`;
+          // Unix/Mac: Use lp command
+          const printCommand = `lp -d "${printerInfo.printer}" "${tempFile}"`;
+          console.log('⚡ Executing Unix print command:', printCommand);
+
+          exec(printCommand, { timeout: 15000 }, (error, stdout, stderr) => {
+            try { fs.unlinkSync(tempFile); } catch(e) {}
+
+            if (error) {
+              console.error('❌ Unix print error:', error);
+              console.log('stderr:', stderr);
+              res.message = `ERROR SYSTEM PRINT: ${error.message}`;
+              res.status = 500;
+            } else {
+              console.log('✅ Unix print successful');
+              res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
+              res.status = 200;
+            }
+            return callback(res);
+          });
         }
-        
-        console.log('⚡ Executing print command:', printCommand);
-        
-        exec(printCommand, (error, stdout, stderr) => {
-          // Clean up temp file
-          try { fs.unlinkSync(tempFile); } catch(e) {}
-          
-          if (error) {
-            console.error('❌ System print error:', error);
-            res.message = `ERROR SYSTEM PRINT: ${error.message}`;
-            res.status = 500;
-          } else {
-            console.log('✅ System print successful');
-            res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
-            res.status = 200;
-          }
-          return callback(res);
-        });
       } catch (e) {
         console.error(`❌ ERROR SYSTEM PRINTER: ${e}`);
         res.message = `ERROR SYSTEM PRINTER: ${e.message}`;
