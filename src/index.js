@@ -17,6 +17,74 @@ const io = new Server(server, {
 });
 const escpos = require('escpos');
 
+// Print job tracking system
+const printJobs = new Map(); // Store active print jobs
+let jobIdCounter = 0;
+
+// Print job status enum
+const PrintJobStatus = {
+  PENDING: 'pending',
+  PREPARING: 'preparing',
+  SENDING: 'sending',
+  PRINTING: 'printing',
+  SUCCESS: 'success',
+  ERROR: 'error',
+  CANCELLED: 'cancelled'
+};
+
+// Helper function to create print job
+function createPrintJob(socketId, data) {
+  const jobId = `job_${Date.now()}_${++jobIdCounter}`;
+  const job = {
+    id: jobId,
+    socketId: socketId,
+    status: PrintJobStatus.PENDING,
+    printerType: data.printerType || 'auto',
+    dataLength: data.dataPrint?.length || 0,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    progress: 0,
+    message: 'Print job created',
+    error: null
+  };
+  printJobs.set(jobId, job);
+  return job;
+}
+
+// Helper function to update print job status
+function updatePrintJobStatus(jobId, status, message = null, progress = null, error = null) {
+  const job = printJobs.get(jobId);
+  if (job) {
+    job.status = status;
+    job.updatedAt = new Date();
+    if (message) job.message = message;
+    if (progress !== null) job.progress = progress;
+    if (error) job.error = error;
+
+    // Emit status update to the client
+    const socket = io.sockets.sockets.get(job.socketId);
+    if (socket) {
+      socket.emit('print-status', {
+        jobId: job.id,
+        status: job.status,
+        message: job.message,
+        progress: job.progress,
+        error: job.error,
+        timestamp: job.updatedAt
+      });
+    }
+
+    // Clean up completed/failed jobs after 5 minutes
+    if (status === PrintJobStatus.SUCCESS || status === PrintJobStatus.ERROR || status === PrintJobStatus.CANCELLED) {
+      setTimeout(() => {
+        printJobs.delete(jobId);
+        console.log(`🗑️ Cleaned up print job: ${jobId}`);
+      }, 5 * 60 * 1000);
+    }
+  }
+  return job;
+}
+
 // Add CORS middleware for Express
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -281,39 +349,39 @@ function getUSBDevice() {
 }
 
 // Enhanced function to print with specific printer type preference
-function printSendWithType(cmds, printerType, callback) {
+function printSendWithType(cmds, printerType, callback, jobId = null) {
   const res = {};
-  
+
   console.log(`Print request for printer type: ${printerType}`);
-  
+
   // Convert "UMUM" to "auto" for auto-detection
   if (printerType && printerType.toUpperCase() === 'UMUM') {
     printerType = 'auto';
     console.log('UMUM printer type converted to auto-detection');
   }
-  
+
   // If specific printer type is requested, try that first
   if (printerType && printerType !== 'auto') {
     // Check if the requested printer exists in system printers
     detectAvailablePrinters((printers) => {
-      const requestedPrinter = printers.find(p => 
+      const requestedPrinter = printers.find(p =>
         p.toLowerCase().includes(printerType.toLowerCase()) ||
         printerType.toLowerCase().includes(p.toLowerCase())
       );
-      
+
       if (requestedPrinter) {
         console.log(`Using requested printer: ${requestedPrinter}`);
-        printWithSystemPrinter(cmds, requestedPrinter, callback);
+        printWithSystemPrinter(cmds, requestedPrinter, callback, jobId);
         return;
       } else {
         console.log(`Requested printer '${printerType}' not found, using auto-detection`);
         // Fall back to auto-detection
-        printSend(cmds, callback);
+        printSend(cmds, callback, jobId);
       }
     });
   } else {
     // Use auto-detection
-    printSend(cmds, callback);
+    printSend(cmds, callback, jobId);
   }
 }
 
@@ -368,7 +436,7 @@ function cleanEscPosCommands(rawData) {
 }
 
 // Function to print directly to a specific system printer
-function printWithSystemPrinter(cmds, printerName, callback) {
+function printWithSystemPrinter(cmds, printerName, callback, jobId = null) {
   const res = {};
   
   console.log(`🖨️ Printing to system printer: ${printerName}`);
@@ -482,10 +550,15 @@ function printWithSystemPrinter(cmds, printerName, callback) {
   }
 }
 
-function printSend(cmds, callback) {
+function printSend(cmds, callback, jobId = null) {
   const res = {};
 
   console.log('🚀 printSend called with data length:', cmds?.length || 0);
+
+  // Update job status: Preparing
+  if (jobId) {
+    updatePrintJobStatus(jobId, PrintJobStatus.PREPARING, 'Checking printer availability...', 10);
+  }
 
   // Check printer availability automatically
   checkPrinterAvailability((printerInfo) => {
@@ -493,13 +566,30 @@ function printSend(cmds, callback) {
       console.error("No printer available:", printerInfo.message);
       res.message = printerInfo.message || "NO PRINTER AVAILABLE";
       res.status = 500;
+
+      // Update job status: Error
+      if (jobId) {
+        updatePrintJobStatus(jobId, PrintJobStatus.ERROR, res.message, 0, res.message);
+      }
+
       return callback(res);
+    }
+
+    // Update job status: Printer found
+    if (jobId) {
+      updatePrintJobStatus(jobId, PrintJobStatus.PREPARING, `Printer detected: ${printerInfo.printer}`, 30);
     }
 
     if (printerInfo.type === 'usb') {
       // Use USB printer with raw ESC/POS commands (no cleaning needed for USB)
       try {
         console.log('🔌 Using USB printer with raw ESC/POS commands');
+
+        // Update job status: Sending to USB
+        if (jobId) {
+          updatePrintJobStatus(jobId, PrintJobStatus.SENDING, 'Connecting to USB printer...', 50);
+        }
+
         const options = { encoding: "GB18030" };
         const device = getUSBDevice();
         const printer = new escpos.Printer(device, options);
@@ -509,18 +599,41 @@ function printSend(cmds, callback) {
             console.error("Error saat membuka perangkat printer:", error);
             res.message = `ERROR MEMBUKA PERANGKAT PRINTER: ${error.message}`;
             res.status = 500;
+
+            // Update job status: Error
+            if (jobId) {
+              updatePrintJobStatus(jobId, PrintJobStatus.ERROR, res.message, 0, error.message);
+            }
+
             return callback(res);
+          }
+
+          // Update job status: Printing
+          if (jobId) {
+            updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Sending data to USB printer...', 75);
           }
 
           try {
             printer.text(cmds).close();
             res.message = "BERHASIL MENCETAK DATA (USB)";
             res.status = 200;
+
+            // Update job status: Success
+            if (jobId) {
+              updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, res.message, 100);
+            }
+
             return callback(res);
           } catch (printError) {
             console.error("Error saat mencetak data:", printError);
             res.message = "ERROR MENCETAK DATA";
             res.status = 500;
+
+            // Update job status: Error
+            if (jobId) {
+              updatePrintJobStatus(jobId, PrintJobStatus.ERROR, res.message, 0, printError.message);
+            }
+
             return callback(res);
           }
         });
@@ -528,6 +641,12 @@ function printSend(cmds, callback) {
         console.error(`ERROR CONNECTION PRINTER: ${e}`);
         res.message = `ERROR CONNECTION PRINTER: ${e.message}`;
         res.status = 500;
+
+        // Update job status: Error
+        if (jobId) {
+          updatePrintJobStatus(jobId, PrintJobStatus.ERROR, res.message, 0, e.message);
+        }
+
         return callback(res);
       }
     } else if (printerInfo.type === 'system') {
@@ -535,9 +654,19 @@ function printSend(cmds, callback) {
       console.log(`🖨️ Using system printer: ${printerInfo.printer}`);
 
       try {
+        // Update job status: Preparing data
+        if (jobId) {
+          updatePrintJobStatus(jobId, PrintJobStatus.PREPARING, 'Cleaning ESC/POS commands...', 40);
+        }
+
         // Clean ESC/POS commands for system printer compatibility
         const cleanText = cleanEscPosCommands(cmds);
         console.log('📝 Using cleaned text for system printer');
+
+        // Update job status: Sending
+        if (jobId) {
+          updatePrintJobStatus(jobId, PrintJobStatus.SENDING, 'Creating print job...', 60);
+        }
 
         // Create a temporary file and use system print command
         const tempFile = path.join(os.tmpdir(), `print_${Date.now()}.txt`);
@@ -549,6 +678,11 @@ function printSend(cmds, callback) {
           // Windows: Use multiple fallback methods
           console.log(`🚀 Attempting Windows print to: ${printerInfo.printer}`);
 
+          // Update job status: Printing (Method 1)
+          if (jobId) {
+            updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Sending to Windows printer (print command)...', 75);
+          }
+
           // Method 1: Traditional print command (most compatible)
           const printCmd = `print /D:"${printerInfo.printer}" "${tempFile}"`;
 
@@ -559,11 +693,22 @@ function printSend(cmds, callback) {
               try { fs.unlinkSync(tempFile); } catch(e) {}
               res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
               res.status = 200;
+
+              // Update job status: Success
+              if (jobId) {
+                updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, res.message, 100);
+              }
+
               return callback(res);
             }
 
             console.log('⚠️ Print command failed:', printError.message);
             console.log('stderr:', stderr);
+
+            // Update job status: Trying Method 2
+            if (jobId) {
+              updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Trying PowerShell method...', 80);
+            }
 
             // Method 2: PowerShell Out-Printer (modern Windows method)
             const psCommand = `powershell -Command "& {Get-Content '${tempFile.replace(/\\/g, '\\\\')}' -Raw | Out-Printer -Name '${printerInfo.printer}'}"`;
@@ -573,11 +718,22 @@ function printSend(cmds, callback) {
                 try { fs.unlinkSync(tempFile); } catch(e) {}
                 res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
                 res.status = 200;
+
+                // Update job status: Success
+                if (jobId) {
+                  updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, res.message, 100);
+                }
+
                 return callback(res);
               }
 
               console.log('⚠️ PowerShell method failed:', psError.message);
               console.log('psStderr:', psStderr);
+
+              // Update job status: Trying Method 3
+              if (jobId) {
+                updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Trying copy to printer port...', 85);
+              }
 
               // Method 3: Copy to printer port (thermal printer compatible)
               const copyCommand = `copy /B "${tempFile}" "\\\\localhost\\${printerInfo.printer}"`;
@@ -595,10 +751,20 @@ function printSend(cmds, callback) {
                   });
                   res.message = `ERROR: Tidak dapat mencetak ke ${printerInfo.printer}. Pastikan printer aktif dan terpasang dengan benar.`;
                   res.status = 500;
+
+                  // Update job status: Error
+                  if (jobId) {
+                    updatePrintJobStatus(jobId, PrintJobStatus.ERROR, res.message, 0, copyError.message);
+                  }
                 } else {
                   console.log('✅ Copy to printer successful');
                   res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
                   res.status = 200;
+
+                  // Update job status: Success
+                  if (jobId) {
+                    updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, res.message, 100);
+                  }
                 }
                 return callback(res);
               });
@@ -609,6 +775,11 @@ function printSend(cmds, callback) {
           const printCommand = `lp -d "${printerInfo.printer}" "${tempFile}"`;
           console.log('⚡ Executing Unix print command:', printCommand);
 
+          // Update job status: Printing
+          if (jobId) {
+            updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Sending to Unix/Mac printer...', 75);
+          }
+
           exec(printCommand, { timeout: 15000 }, (error, stdout, stderr) => {
             try { fs.unlinkSync(tempFile); } catch(e) {}
 
@@ -617,10 +788,20 @@ function printSend(cmds, callback) {
               console.log('stderr:', stderr);
               res.message = `ERROR SYSTEM PRINT: ${error.message}`;
               res.status = 500;
+
+              // Update job status: Error
+              if (jobId) {
+                updatePrintJobStatus(jobId, PrintJobStatus.ERROR, res.message, 0, error.message);
+              }
             } else {
               console.log('✅ Unix print successful');
               res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
               res.status = 200;
+
+              // Update job status: Success
+              if (jobId) {
+                updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, res.message, 100);
+              }
             }
             return callback(res);
           });
@@ -888,19 +1069,19 @@ io.on('connection', (socket) => {
   
   socket.on('print', (data) => {
     console.log('🖨️ Print request received from:', socket.id, data);
-    
+
     try {
       // Extract printer type and data from frontend request
       let printerType = data.printerType || 'auto'; // Default to auto-detection
-      
+
       // Convert "UMUM" to "auto" for auto-detection
       if (printerType.toUpperCase() === 'UMUM') {
         printerType = 'auto';
         console.log('🔄 UMUM printer type detected, using auto-detection');
       }
-      
+
       const dataPrint = data.dataPrint;
-      
+
       if (!dataPrint) {
         console.log('❌ No data to print');
         socket.emit('print-response', {
@@ -909,20 +1090,34 @@ io.on('connection', (socket) => {
         });
         return;
       }
-      
-      console.log('🚀 Starting print process...');
-      
+
+      // Create print job for tracking
+      const printJob = createPrintJob(socket.id, {
+        printerType: printerType,
+        dataPrint: dataPrint
+      });
+
+      console.log(`🚀 Starting print process... Job ID: ${printJob.id}`);
+
+      // Send job ID to client immediately
+      socket.emit('print-job-created', {
+        jobId: printJob.id,
+        message: 'Print job created',
+        status: PrintJobStatus.PENDING
+      });
+
       // Use the enhanced printSend function with printer type preference
       printSendWithType(dataPrint, printerType, (result) => {
         try {
           console.log('📄 Print result:', result);
-          
+
           // Ensure result has proper structure
           const response = {
+            jobId: printJob.id,
             message: result.message || 'Unknown error',
             status: result.status || 500
           };
-          
+
           // Check if socket is still connected before emitting
           if (socket.connected) {
             socket.emit('print-response', response);
@@ -932,11 +1127,12 @@ io.on('connection', (socket) => {
           }
         } catch (emitError) {
           console.error('❌ Error sending print response:', emitError);
-          
+
           // Try to send error response if socket is still connected
           if (socket.connected) {
             try {
               socket.emit('print-response', {
+                jobId: printJob.id,
                 message: 'SYSTEM ERROR: Could not send print response',
                 status: 500
               });
@@ -945,7 +1141,7 @@ io.on('connection', (socket) => {
             }
           }
         }
-      });
+      }, printJob.id);
       
     } catch (printError) {
       console.error('❌ Error in print handler:', printError);

@@ -79,6 +79,9 @@ End test
             document.getElementById('consoleLog').textContent = '';
         }
 
+        // Store current print job ID for tracking
+        let currentJobId = null;
+
         // Socket event listeners
         socket.on('connect', () => {
             log('✅ Connected to server');
@@ -89,8 +92,43 @@ End test
             log('❌ Disconnected from server');
         });
 
+        // New event: Print job created
+        socket.on('print-job-created', (data) => {
+            currentJobId = data.jobId;
+            log(`📝 Print job created: ${data.jobId}`);
+            log(`📊 Status: ${data.status} - ${data.message}`);
+        });
+
+        // New event: Real-time print status updates
+        socket.on('print-status', (status) => {
+            const timestamp = new Date(status.timestamp).toLocaleTimeString();
+            const statusEmoji = {
+                'pending': '⏳',
+                'preparing': '🔄',
+                'sending': '📤',
+                'printing': '🖨️',
+                'success': '✅',
+                'error': '❌',
+                'cancelled': '🚫'
+            }[status.status] || '📋';
+
+            log(`${statusEmoji} [${status.jobId}] ${status.status.toUpperCase()} - ${status.message} (${status.progress}%)`);
+
+            if (status.error) {
+                log(`   ❌ Error details: ${status.error}`);
+            }
+        });
+
         socket.on('print-response', (response) => {
-            log(`Print response: ${JSON.stringify(response)}`);
+            log(`📄 Final print response: ${JSON.stringify(response)}`);
+            if (response.jobId) {
+                log(`   Job ID: ${response.jobId}`);
+            }
+            if (response.status === 200) {
+                log(`   ✅ SUCCESS: ${response.message}`);
+            } else {
+                log(`   ❌ FAILED: ${response.message}`);
+            }
         });
 
         // Check available printers

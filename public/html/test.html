@@ -65,11 +65,45 @@
             log('❌ Disconnected from print server');
         });
         
+        // Track current print job
+        let currentPrintJob = null;
+
+        socket2.on('print-job-created', (data) => {
+            currentPrintJob = data.jobId;
+            log(`📝 Print job created: ${data.jobId}`);
+        });
+
+        socket2.on('print-status', (status) => {
+            const statusEmoji = {
+                'pending': '⏳',
+                'preparing': '🔄',
+                'sending': '📤',
+                'printing': '🖨️',
+                'success': '✅',
+                'error': '❌'
+            }[status.status] || '📋';
+
+            log(`${statusEmoji} ${status.status.toUpperCase()}: ${status.message} (${status.progress}%)`);
+
+            // Update SweetAlert with status
+            if (status.status === 'preparing' || status.status === 'sending' || status.status === 'printing') {
+                Swal.update({
+                    html: `<div style="text-align: left;">
+                        <p><strong>Status:</strong> ${status.message}</p>
+                        <div style="background: #f0f0f0; border-radius: 10px; height: 20px; margin: 10px 0;">
+                            <div style="background: #007bff; height: 100%; border-radius: 10px; width: ${status.progress}%; transition: width 0.3s;"></div>
+                        </div>
+                        <p style="text-align: center; color: #666;">${status.progress}%</p>
+                    </div>`
+                });
+            }
+        });
+
         socket2.on('print-response', (response) => {
             log(`Print response: ${response.message} (Status: ${response.status})`);
-            
+
             Swal.close(); // Close the waiting dialog
-            
+
             if (response.status === 200) {
                 Swal.fire({
                     title: 'Success!',
