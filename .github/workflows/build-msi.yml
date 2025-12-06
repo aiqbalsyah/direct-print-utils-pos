@@ -155,6 +155,7 @@ jobs:
 
                       <Feature Id="ProductFeature" Title="Direct Print Server" Level="1">
                         <ComponentGroupRef Id="ProductComponents" />
+                        <ComponentGroupRef Id="StartMenuComponents" />
                       </Feature>
 
                       <Directory Id="TARGETDIR" Name="SourceDir">
@@ -171,7 +172,28 @@ jobs:
                           <File Id="DirectPrintServerEXE" Source="installer\bin\DirectPrintServer.exe" KeyPath="yes" />
                         </Component>
 
-                        <Component Id="StartMenuShortcut" Guid="66666666-6666-6666-6666-666666666666" Directory="ApplicationProgramsFolder">
+                        <Component Id="ServiceScripts" Guid="22222222-2222-2222-2222-222222222222">
+                          <File Id="InstallServiceJS" Source="installer\scripts\service\install-service.js" />
+                          <File Id="UninstallServiceJS" Source="installer\scripts\service\uninstall-service.js" />
+                        </Component>
+
+                        <Component Id="StartupScripts" Guid="33333333-3333-3333-3333-333333333333">
+                          <File Id="StartupBat" Source="installer\scripts\startup\startup.bat" />
+                          <File Id="InstallStartupBat" Source="installer\scripts\startup\install-startup.bat" />
+                          <File Id="UninstallStartupBat" Source="installer\scripts\startup\uninstall-startup.bat" />
+                        </Component>
+
+                        <Component Id="WixScripts" Guid="44444444-4444-4444-4444-444444444444">
+                          <File Id="PreInstallBat" Source="installer\scripts\wix\pre-install.bat" />
+                          <File Id="PostInstallBat" Source="installer\scripts\wix\post-install.bat" />
+                          <File Id="PreUninstallBat" Source="installer\scripts\wix\pre-uninstall.bat" />
+                          <RemoveFolder Id="INSTALLFOLDER" Directory="INSTALLFOLDER" On="uninstall" />
+                          <RegistryValue Root="HKCU" Key="SOFTWARE\DirectPrintServer" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+                        </Component>
+                      </ComponentGroup>
+
+                      <ComponentGroup Id="StartMenuComponents" Directory="ApplicationProgramsFolder">
+                        <Component Id="StartMenuShortcut" Guid="66666666-6666-6666-6666-666666666666">
                           <Shortcut Id="ApplicationStartMenuShortcut"
                                     Name="Direct Print Server"
                                     Description="Direct Print Server - Thermal Printer Service"
@@ -180,25 +202,6 @@ jobs:
                                     WorkingDirectory="INSTALLFOLDER" />
                           <RemoveFolder Id="CleanUpShortcut" Directory="ApplicationProgramsFolder" On="uninstall" />
                           <RegistryValue Root="HKCU" Key="SOFTWARE\DirectPrintServer" Name="startmenu" Type="integer" Value="1" KeyPath="yes" />
-                        </Component>
-                        
-                        <Component Id="ServiceScripts" Guid="22222222-2222-2222-2222-222222222222">
-                          <File Id="InstallServiceJS" Source="installer\scripts\service\install-service.js" />
-                          <File Id="UninstallServiceJS" Source="installer\scripts\service\uninstall-service.js" />
-                        </Component>
-                        
-                        <Component Id="StartupScripts" Guid="33333333-3333-3333-3333-333333333333">
-                          <File Id="StartupBat" Source="installer\scripts\startup\startup.bat" />
-                          <File Id="InstallStartupBat" Source="installer\scripts\startup\install-startup.bat" />
-                          <File Id="UninstallStartupBat" Source="installer\scripts\startup\uninstall-startup.bat" />
-                        </Component>
-                        
-                        <Component Id="WixScripts" Guid="44444444-4444-4444-4444-444444444444">
-                          <File Id="PreInstallBat" Source="installer\scripts\wix\pre-install.bat" />
-                          <File Id="PostInstallBat" Source="installer\scripts\wix\post-install.bat" />
-                          <File Id="PreUninstallBat" Source="installer\scripts\wix\pre-uninstall.bat" />
-                          <RemoveFolder Id="INSTALLFOLDER" Directory="INSTALLFOLDER" On="uninstall" />
-                          <RegistryValue Root="HKCU" Key="SOFTWARE\DirectPrintServer" Name="installed" Type="integer" Value="1" KeyPath="yes" />
                         </Component>
                       </ComponentGroup>
                       
