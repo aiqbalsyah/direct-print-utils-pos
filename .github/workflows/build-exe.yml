@@ -4,7 +4,7 @@ on:
     workflow_dispatch:
         inputs:
             create_release:
-                description: "Create GitHub Release"
+                description: "Create GitHub Release (requires git tag v*)"
                 required: false
                 default: false
                 type: boolean
@@ -18,10 +18,10 @@ jobs:
             - name: Checkout code
               uses: actions/checkout@v4
 
-            - name: Setup Node.js 18
+            - name: Setup Node.js 20
               uses: actions/setup-node@v4
               with:
-                  node-version: "18.18.0"
+                  node-version: "20"
 
             - name: Install dependencies
               run: |

@@ -675,27 +675,125 @@ function printSend(cmds, callback, jobId = null) {
         console.log(`📄 Created temp file with cleaned text: ${tempFile}`);
         
         if (os.platform() === 'win32') {
-          // Windows: Use PowerShell Out-Printer (native Windows print method)
-          console.log(`🚀 Windows print to: ${printerInfo.printer}`);
+          // Windows: Send RAW data directly to thermal printer
+          console.log(`🚀 Windows thermal printer: ${printerInfo.printer}`);
 
           // Update job status: Printing
           if (jobId) {
-            updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Sending to Windows printer...', 75);
+            updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Sending to thermal printer...', 75);
           }
 
-          // Use PowerShell Out-Printer - most reliable for Windows printing
-          // -Raw flag sends content directly without encoding changes
+          // For thermal printers, we DON'T clean ESC/POS commands
+          // We send RAW data directly to printer port
+          console.log(`📄 Using RAW ESC/POS data (${cmds.length} bytes)`);
+          console.log(`🖨️ Target printer: ${printerInfo.printer}`);
+
+          // Write RAW data to temp file (binary mode)
+          const rawTempFile = path.join(os.tmpdir(), `print_raw_${Date.now()}.bin`);
+          fs.writeFileSync(rawTempFile, cmds, 'binary');
+
+          // Create PowerShell script file (more reliable than inline command)
+          const psScriptFile = path.join(os.tmpdir(), `print_script_${Date.now()}.ps1`);
           const psScript = `
-$content = Get-Content -Path '${tempFile.replace(/'/g, "''")}' -Raw -Encoding UTF8
-$content | Out-Printer -Name "${printerInfo.printer.replace(/"/g, '`"')}"
-Write-Host "Print job sent successfully"
+# RAW Printer Helper for Thermal Printers
+# This script sends raw ESC/POS data directly to Windows printer
+
+$printerName = "${printerInfo.printer.replace(/"/g, '""')}"
+$filePath = "${rawTempFile.replace(/\\/g, '\\')}"
+
+Write-Host "Loading printer: $printerName"
+Write-Host "Reading file: $filePath"
+
+try {
+    # Read binary data
+    $bytes = [System.IO.File]::ReadAllBytes($filePath)
+    Write-Host "File size: $($bytes.Length) bytes"
+
+    # Define Windows Print Spooler API
+    $source = @"
+using System;
+using System.Runtime.InteropServices;
+
+public class RawPrinterHelper {
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Ansi)]
+    public class DOCINFOA {
+        [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
+        [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
+        [MarshalAs(UnmanagedType.LPStr)] public string pDataType;
+    }
+
+    [DllImport("winspool.Drv", EntryPoint="OpenPrinterA", SetLastError=true, CharSet=CharSet.Ansi)]
+    public static extern bool OpenPrinter([MarshalAs(UnmanagedType.LPStr)] string szPrinter, out IntPtr hPrinter, IntPtr pd);
+
+    [DllImport("winspool.Drv", EntryPoint="ClosePrinter", SetLastError=true)]
+    public static extern bool ClosePrinter(IntPtr hPrinter);
+
+    [DllImport("winspool.Drv", EntryPoint="StartDocPrinterA", SetLastError=true, CharSet=CharSet.Ansi)]
+    public static extern bool StartDocPrinter(IntPtr hPrinter, int level, [In, MarshalAs(UnmanagedType.LPStruct)] DOCINFOA di);
+
+    [DllImport("winspool.Drv", EntryPoint="EndDocPrinter", SetLastError=true)]
+    public static extern bool EndDocPrinter(IntPtr hPrinter);
+
+    [DllImport("winspool.Drv", EntryPoint="StartPagePrinter", SetLastError=true)]
+    public static extern bool StartPagePrinter(IntPtr hPrinter);
+
+    [DllImport("winspool.Drv", EntryPoint="EndPagePrinter", SetLastError=true)]
+    public static extern bool EndPagePrinter(IntPtr hPrinter);
+
+    [DllImport("winspool.Drv", EntryPoint="WritePrinter", SetLastError=true)]
+    public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, int dwCount, out int dwWritten);
+
+    public static bool SendBytesToPrinter(string printerName, byte[] bytes) {
+        IntPtr hPrinter = IntPtr.Zero;
+        DOCINFOA di = new DOCINFOA();
+        di.pDocName = "Thermal Print Job";
+        di.pDataType = "RAW";  // RAW mode - no driver processing
+
+        bool success = false;
+
+        if (OpenPrinter(printerName, out hPrinter, IntPtr.Zero)) {
+            if (StartDocPrinter(hPrinter, 1, di)) {
+                if (StartPagePrinter(hPrinter)) {
+                    IntPtr pUnmanagedBytes = Marshal.AllocCoTaskMem(bytes.Length);
+                    Marshal.Copy(bytes, 0, pUnmanagedBytes, bytes.Length);
+                    int dwWritten;
+                    success = WritePrinter(hPrinter, pUnmanagedBytes, bytes.Length, out dwWritten);
+                    Marshal.FreeCoTaskMem(pUnmanagedBytes);
+                    EndPagePrinter(hPrinter);
+                }
+                EndDocPrinter(hPrinter);
+            }
+            ClosePrinter(hPrinter);
+        }
+        return success;
+    }
+}
+"@
+
+    Add-Type -TypeDefinition $source
+
+    # Send to printer
+    Write-Host "Sending to printer..."
+    $result = [RawPrinterHelper]::SendBytesToPrinter($printerName, $bytes)
+
+    if ($result) {
+        Write-Host "✅ Print job sent successfully"
+        exit 0
+    } else {
+        Write-Error "❌ Failed to send print job"
+        exit 1
+    }
+} catch {
+    Write-Error "❌ Exception: $($_.Exception.Message)"
+    exit 1
+}
 `;
 
-          const psCommand = `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "${psScript.replace(/\n/g, '; ').replace(/"/g, '\\"')}"`;
+          // Write PowerShell script to file
+          fs.writeFileSync(psScriptFile, psScript, 'utf8');
 
-          console.log(`🚀 Executing PowerShell print command`);
-          console.log(`📄 Temp file: ${tempFile}`);
-          console.log(`🖨️ Target printer: ${printerInfo.printer}`);
+          // Execute PowerShell script file
+          const psCommand = `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${psScriptFile}"`;
 
           exec(psCommand, {
             timeout: 30000,
@@ -703,13 +801,13 @@ Write-Host "Print job sent successfully"
           }, (printError, stdout, stderr) => {
             console.log('📥 Print callback triggered');
 
-            // Clean up temp file
-            try { fs.unlinkSync(tempFile); } catch(e) {
-              console.log('⚠️ Could not delete temp file:', e.message);
-            }
+            // Clean up temp files
+            try { fs.unlinkSync(tempFile); } catch(e) {}
+            try { fs.unlinkSync(rawTempFile); } catch(e) {}
+            try { fs.unlinkSync(psScriptFile); } catch(e) {}
 
             if (printError) {
-              console.error('❌ Windows print failed:', printError.message);
+              console.error('❌ Windows thermal print failed:', printError.message);
               if (stderr) console.error('stderr:', stderr);
 
               res.message = `ERROR: Tidak dapat mencetak ke ${printerInfo.printer}. ${printError.message}`;
@@ -719,7 +817,7 @@ Write-Host "Print job sent successfully"
                 updatePrintJobStatus(jobId, PrintJobStatus.ERROR, res.message, 0, printError.message);
               }
             } else {
-              console.log('✅ Print sent to Windows spooler');
+              console.log('✅ RAW data sent to thermal printer');
               if (stdout) console.log('stdout:', stdout);
 
               res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;

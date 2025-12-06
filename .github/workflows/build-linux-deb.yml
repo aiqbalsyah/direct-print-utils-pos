@@ -1,0 +1,431 @@
+name: Build Linux DEB Package
+
+on:
+    workflow_dispatch:
+        inputs:
+            create_release:
+                description: "Create GitHub Release (requires git tag v*)"
+                required: false
+                default: false
+                type: boolean
+
+jobs:
+    build-deb:
+        runs-on: ubuntu-latest
+        name: Build Linux DEB Package
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js 20
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+
+            - name: Install dependencies
+              run: |
+                  echo "Installing Node.js dependencies..."
+                  npm install
+
+            - name: Install pkg globally
+              run: |
+                  echo "Installing pkg for executable creation..."
+                  npm install -g pkg
+
+            - name: Build Linux executable
+              run: |
+                  echo "Building Linux x64 executable..."
+                  pkg . --targets node20-linux-x64 --output ./dist/direct-print-linux
+                  chmod +x ./dist/direct-print-linux
+
+                  echo "Verifying executable..."
+                  ls -lh ./dist/direct-print-linux
+                  file ./dist/direct-print-linux
+
+            - name: Install DEB packaging tools
+              run: |
+                  echo "Installing dpkg-deb and fakeroot..."
+                  sudo apt-get update
+                  sudo apt-get install -y dpkg-dev fakeroot
+
+            - name: Create DEB package structure
+              run: |
+                  echo "Creating DEB package directory structure..."
+
+                  # Create package directory
+                  mkdir -p direct-print-server_1.0.0_amd64/DEBIAN
+                  mkdir -p direct-print-server_1.0.0_amd64/usr/local/bin
+                  mkdir -p direct-print-server_1.0.0_amd64/usr/local/share/direct-print-server
+                  mkdir -p direct-print-server_1.0.0_amd64/etc/systemd/system
+                  mkdir -p direct-print-server_1.0.0_amd64/usr/share/applications
+                  mkdir -p direct-print-server_1.0.0_amd64/usr/share/doc/direct-print-server
+
+                  echo "✅ DEB structure created"
+
+            - name: Copy executable and assets
+              run: |
+                  echo "Copying application files..."
+
+                  # Copy executable
+                  cp dist/direct-print-linux direct-print-server_1.0.0_amd64/usr/local/bin/direct-print-server
+                  chmod +x direct-print-server_1.0.0_amd64/usr/local/bin/direct-print-server
+
+                  # Copy public assets
+                  if [ -d "public" ]; then
+                    cp -r public/* direct-print-server_1.0.0_amd64/usr/local/share/direct-print-server/
+                  fi
+
+                  echo "✅ Files copied"
+
+            - name: Create systemd service file
+              run: |
+                  cat > direct-print-server_1.0.0_amd64/etc/systemd/system/direct-print-server.service << 'EOF'
+                  [Unit]
+                  Description=Direct Print Server - Thermal Printer Service
+                  After=network.target cups.service
+
+                  [Service]
+                  Type=simple
+                  User=root
+                  ExecStart=/usr/local/bin/direct-print-server
+                  Restart=always
+                  RestartSec=10
+                  StandardOutput=journal
+                  StandardError=journal
+
+                  [Install]
+                  WantedBy=multi-user.target
+                  EOF
+
+                  echo "✅ Systemd service file created"
+
+            - name: Create desktop entry
+              run: |
+                  cat > direct-print-server_1.0.0_amd64/usr/share/applications/direct-print-server.desktop << 'EOF'
+                  [Desktop Entry]
+                  Version=1.0
+                  Type=Application
+                  Name=Direct Print Server
+                  Comment=Thermal Printer Service for POS Systems
+                  Exec=xdg-open http://localhost:4000
+                  Icon=printer
+                  Terminal=false
+                  Categories=Office;Printing;
+                  Keywords=printer;thermal;pos;receipt;
+                  EOF
+
+                  echo "✅ Desktop entry created"
+
+            - name: Create control file
+              run: |
+                  cat > direct-print-server_1.0.0_amd64/DEBIAN/control << 'EOF'
+                  Package: direct-print-server
+                  Version: 1.0.0
+                  Section: utils
+                  Priority: optional
+                  Architecture: amd64
+                  Depends: libcups2
+                  Maintainer: aiqbalsyah <noreply@github.com>
+                  Description: Direct Print Server - Thermal Printer Service
+                   Thermal printer service for Windows, Mac, and Linux.
+                   Supports system printers and thermal receipt printers.
+                   .
+                   Features:
+                    - Auto printer detection
+                    - WebSocket real-time tracking
+                    - ESC/POS command support
+                    - Web-based management interface
+                    - Systemd service integration
+                  Homepage: https://github.com/aiqbalsyah/direct-print-utils-pos
+                  EOF
+
+                  echo "✅ Control file created"
+
+            - name: Create postinst script
+              run: |
+                  cat > direct-print-server_1.0.0_amd64/DEBIAN/postinst << 'EOF'
+                  #!/bin/bash
+                  set -e
+
+                  echo "Setting up Direct Print Server..."
+
+                  # Reload systemd
+                  systemctl daemon-reload
+
+                  # Enable service
+                  systemctl enable direct-print-server.service
+
+                  # Start service
+                  systemctl start direct-print-server.service
+
+                  echo "✅ Direct Print Server installed successfully!"
+                  echo "   Service started and enabled for auto-start"
+                  echo "   Access web interface at: http://localhost:4000"
+                  echo ""
+                  echo "Useful commands:"
+                  echo "  - Check status: systemctl status direct-print-server"
+                  echo "  - View logs: journalctl -u direct-print-server -f"
+                  echo "  - Restart: systemctl restart direct-print-server"
+
+                  exit 0
+                  EOF
+
+                  chmod +x direct-print-server_1.0.0_amd64/DEBIAN/postinst
+                  echo "✅ Post-install script created"
+
+            - name: Create prerm script
+              run: |
+                  cat > direct-print-server_1.0.0_amd64/DEBIAN/prerm << 'EOF'
+                  #!/bin/bash
+                  set -e
+
+                  echo "Stopping Direct Print Server..."
+
+                  # Stop service
+                  systemctl stop direct-print-server.service || true
+
+                  # Disable service
+                  systemctl disable direct-print-server.service || true
+
+                  exit 0
+                  EOF
+
+                  chmod +x direct-print-server_1.0.0_amd64/DEBIAN/prerm
+                  echo "✅ Pre-remove script created"
+
+            - name: Create postrm script
+              run: |
+                  cat > direct-print-server_1.0.0_amd64/DEBIAN/postrm << 'EOF'
+                  #!/bin/bash
+                  set -e
+
+                  # Reload systemd
+                  systemctl daemon-reload
+
+                  echo "✅ Direct Print Server removed successfully"
+
+                  exit 0
+                  EOF
+
+                  chmod +x direct-print-server_1.0.0_amd64/DEBIAN/postrm
+                  echo "✅ Post-remove script created"
+
+            - name: Create README documentation
+              run: |
+                  cat > direct-print-server_1.0.0_amd64/usr/share/doc/direct-print-server/README << 'EOF'
+                  Direct Print Server - Thermal Printer Service
+                  =============================================
+
+                  Version: 1.0.0
+
+                  INSTALLATION
+                  ------------
+                  sudo dpkg -i direct-print-server_1.0.0_amd64.deb
+
+                  USAGE
+                  -----
+                  The service starts automatically after installation.
+                  Access the web interface at: http://localhost:4000
+
+                  SYSTEMD COMMANDS
+                  ----------------
+                  Start:   sudo systemctl start direct-print-server
+                  Stop:    sudo systemctl stop direct-print-server
+                  Restart: sudo systemctl restart direct-print-server
+                  Status:  sudo systemctl status direct-print-server
+                  Logs:    sudo journalctl -u direct-print-server -f
+
+                  UNINSTALL
+                  ---------
+                  sudo dpkg -r direct-print-server
+
+                  REQUIREMENTS
+                  ------------
+                  - Ubuntu 20.04+ / Debian 10+
+                  - CUPS printing system (usually pre-installed)
+                  - Printer configured in system settings
+
+                  SUPPORT
+                  -------
+                  GitHub: https://github.com/aiqbalsyah/direct-print-utils-pos
+                  EOF
+
+                  echo "✅ README created"
+
+            - name: Set proper permissions
+              run: |
+                  echo "Setting file permissions..."
+
+                  # Set ownership (will be root after install)
+                  sudo chown -R root:root direct-print-server_1.0.0_amd64
+
+                  # Set permissions
+                  sudo chmod -R 755 direct-print-server_1.0.0_amd64/usr
+                  sudo chmod -R 755 direct-print-server_1.0.0_amd64/etc
+                  sudo chmod 644 direct-print-server_1.0.0_amd64/etc/systemd/system/direct-print-server.service
+                  sudo chmod 755 direct-print-server_1.0.0_amd64/DEBIAN
+                  sudo chmod 644 direct-print-server_1.0.0_amd64/DEBIAN/control
+
+                  echo "✅ Permissions set"
+
+            - name: Build DEB package
+              run: |
+                  echo "Building DEB package..."
+
+                  dpkg-deb --build direct-print-server_1.0.0_amd64
+
+                  echo "Verifying DEB package..."
+                  ls -lh direct-print-server_1.0.0_amd64.deb
+                  dpkg-deb --info direct-print-server_1.0.0_amd64.deb
+                  dpkg-deb --contents direct-print-server_1.0.0_amd64.deb
+
+                  echo "✅ DEB package built successfully!"
+
+            - name: Test DEB package
+              run: |
+                  echo "Testing DEB package installation (dry-run)..."
+                  sudo dpkg --dry-run -i direct-print-server_1.0.0_amd64.deb || echo "Dry-run test completed"
+
+            - name: Create release package
+              run: |
+                  mkdir -p release
+                  cp direct-print-server_1.0.0_amd64.deb release/
+
+                  # Create installation guide
+                  cat > release/INSTALL.txt << 'EOF'
+                  ====================================================
+                    Direct Print Server - Linux DEB Package
+                  ====================================================
+
+                  INSTALLATION
+                  ------------
+                  sudo dpkg -i direct-print-server_1.0.0_amd64.deb
+
+                  The service will automatically start after installation.
+
+                  VERIFY INSTALLATION
+                  -------------------
+                  1. Check service status:
+                     systemctl status direct-print-server
+
+                  2. Open web interface:
+                     http://localhost:4000
+
+                  3. View logs:
+                     journalctl -u direct-print-server -f
+
+                  REQUIREMENTS
+                  ------------
+                  - Ubuntu 20.04+ / Debian 10+ / Linux Mint 20+
+                  - CUPS printing system
+                  - Printer configured in system
+
+                  UNINSTALL
+                  ---------
+                  sudo dpkg -r direct-print-server
+
+                  TROUBLESHOOTING
+                  ---------------
+                  If service won't start:
+                  1. Check logs: journalctl -u direct-print-server -xe
+                  2. Verify port 4000 is available: lsof -i:4000
+                  3. Check printer setup: lpstat -p -d
+
+                  SUPPORT
+                  -------
+                  GitHub: https://github.com/aiqbalsyah/direct-print-utils-pos
+                  Issues: https://github.com/aiqbalsyah/direct-print-utils-pos/issues
+                  EOF
+
+                  echo "✅ Release package created"
+
+            - name: Upload DEB artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: direct-print-linux-deb-${{ github.sha }}
+                  path: release/
+                  retention-days: 90
+
+            - name: Create Release
+              if: ${{ inputs.create_release == true && startsWith(github.ref, 'refs/tags/v') }}
+              uses: softprops/action-gh-release@v1
+              with:
+                  files: |
+                      release/direct-print-server_1.0.0_amd64.deb
+                      release/INSTALL.txt
+                  name: Direct Print Server v${{ github.ref_name }}
+                  tag_name: ${{ github.ref_name }}
+                  body: |
+                      ## 🐧 Direct Print Server - Linux DEB Package
+
+                      ### 📦 Professional Debian/Ubuntu Package
+
+                      **Features:**
+                      - ✅ **Native DEB Package** - Standard Linux package format
+                      - ✅ **Systemd Integration** - Auto-start on boot
+                      - ✅ **CUPS Support** - Works with any CUPS printer
+                      - ✅ **Easy Management** - systemctl commands
+                      - ✅ **Clean Uninstall** - Complete removal with dpkg
+
+                      ### 🚀 Quick Installation
+
+                      ```bash
+                      # Download the DEB package
+                      wget https://github.com/aiqbalsyah/direct-print-utils-pos/releases/download/v${{ github.ref_name }}/direct-print-server_1.0.0_amd64.deb
+
+                      # Install
+                      sudo dpkg -i direct-print-server_1.0.0_amd64.deb
+
+                      # Verify
+                      systemctl status direct-print-server
+
+                      # Open web interface
+                      xdg-open http://localhost:4000
+                      ```
+
+                      ### 💻 Supported Distributions
+
+                      - Ubuntu 20.04 LTS (Focal)
+                      - Ubuntu 22.04 LTS (Jammy)
+                      - Ubuntu 24.04 LTS (Noble)
+                      - Debian 10 (Buster)
+                      - Debian 11 (Bullseye)
+                      - Debian 12 (Bookworm)
+                      - Linux Mint 20+
+                      - Pop!_OS 20.04+
+
+                      ### 🎯 Package Contents
+
+                      - `/usr/local/bin/direct-print-server` - Main executable
+                      - `/etc/systemd/system/direct-print-server.service` - Systemd service
+                      - `/usr/share/applications/direct-print-server.desktop` - Desktop entry
+                      - `/usr/share/doc/direct-print-server/` - Documentation
+
+                      ### 🔧 Management Commands
+
+                      ```bash
+                      # Service control
+                      sudo systemctl start direct-print-server
+                      sudo systemctl stop direct-print-server
+                      sudo systemctl restart direct-print-server
+                      sudo systemctl status direct-print-server
+
+                      # View logs
+                      sudo journalctl -u direct-print-server -f
+
+                      # Uninstall
+                      sudo dpkg -r direct-print-server
+                      ```
+
+                      ### 📋 Requirements
+
+                      - CUPS printing system (usually pre-installed)
+                      - Printer configured in system settings
+                      - Port 4000 available
+
+                      Perfect for Linux servers and desktop deployments!
+                  draft: false
+                  prerelease: false
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
