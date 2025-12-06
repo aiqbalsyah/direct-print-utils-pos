@@ -156,6 +156,7 @@ jobs:
                       <Feature Id="ProductFeature" Title="Direct Print Server" Level="1">
                         <ComponentGroupRef Id="ProductComponents" />
                         <ComponentGroupRef Id="StartMenuComponents" />
+                        <ComponentRef Id="RegistryEntries" />
                       </Feature>
 
                       <Directory Id="TARGETDIR" Name="SourceDir">
@@ -186,9 +187,8 @@ jobs:
                         <Component Id="WixScripts" Guid="44444444-4444-4444-4444-444444444444">
                           <File Id="PreInstallBat" Source="installer\scripts\wix\pre-install.bat" />
                           <File Id="PostInstallBat" Source="installer\scripts\wix\post-install.bat" />
-                          <File Id="PreUninstallBat" Source="installer\scripts\wix\pre-uninstall.bat" />
+                          <File Id="PreUninstallBat" Source="installer\scripts\wix\pre-uninstall.bat" KeyPath="yes" />
                           <RemoveFolder Id="INSTALLFOLDER" Directory="INSTALLFOLDER" On="uninstall" />
-                          <RegistryValue Root="HKCU" Key="SOFTWARE\DirectPrintServer" Name="installed" Type="integer" Value="1" KeyPath="yes" />
                         </Component>
                       </ComponentGroup>
 
@@ -204,6 +204,17 @@ jobs:
                           <RegistryValue Root="HKCU" Key="SOFTWARE\DirectPrintServer" Name="startmenu" Type="integer" Value="1" KeyPath="yes" />
                         </Component>
                       </ComponentGroup>
+
+                      <!-- Registry entries for tracking installation -->
+                      <DirectoryRef Id="TARGETDIR">
+                        <Component Id="RegistryEntries" Guid="55555555-5555-5555-5555-555555555555">
+                          <RegistryKey Root="HKLM" Key="SOFTWARE\DirectPrintServer">
+                            <RegistryValue Type="string" Name="InstallPath" Value="[INSTALLFOLDER]" KeyPath="yes" />
+                            <RegistryValue Type="string" Name="Version" Value="1.0.0" />
+                            <RegistryValue Type="integer" Name="Installed" Value="1" />
+                          </RegistryKey>
+                        </Component>
+                      </DirectoryRef>
                       
                       <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
                       <UIRef Id="WixUI_InstallDir" />
@@ -225,13 +236,8 @@ jobs:
                         <Custom Action="RunPreUninstall" Before="RemoveFiles">REMOVE~="ALL"</Custom>
                       </InstallExecuteSequence>
 
-                      <!-- Custom UI messages -->
-                      <UI>
-                        <Error Id="1001">ADMINISTRATOR PRIVILEGES REQUIRED - Please right-click the MSI file and select Run as administrator. This installer needs admin privileges to install to Program Files and configure Windows system settings.</Error>
-                      </UI>
-
                       <!-- Check for admin privileges and show friendly error -->
-                      <Condition Message="[1001]">
+                      <Condition Message="ADMINISTRATOR PRIVILEGES REQUIRED - Please right-click the MSI file and select 'Run as administrator'. This installer needs admin privileges to install to Program Files and configure Windows system settings.">
                         Privileged
                       </Condition>
 
