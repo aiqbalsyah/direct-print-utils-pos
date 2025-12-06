@@ -675,117 +675,63 @@ function printSend(cmds, callback, jobId = null) {
         console.log(`📄 Created temp file with cleaned text: ${tempFile}`);
         
         if (os.platform() === 'win32') {
-          // Windows: Use multiple fallback methods
-          console.log(`🚀 Attempting Windows print to: ${printerInfo.printer}`);
+          // Windows: Use PowerShell Out-Printer (native Windows print method)
+          console.log(`🚀 Windows print to: ${printerInfo.printer}`);
 
-          // Update job status: Printing (Method 1)
+          // Update job status: Printing
           if (jobId) {
-            updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Sending to Windows printer (print command)...', 75);
+            updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Sending to Windows printer...', 75);
           }
 
-          // Method 1: Traditional print command (most compatible)
-          const printCmd = `print /D:"${printerInfo.printer}" "${tempFile}"`;
-          console.log(`🚀 Executing: ${printCmd}`);
+          // Use PowerShell Out-Printer - most reliable for Windows printing
+          // -Raw flag sends content directly without encoding changes
+          const psScript = `
+$content = Get-Content -Path '${tempFile.replace(/'/g, "''")}' -Raw -Encoding UTF8
+$content | Out-Printer -Name "${printerInfo.printer.replace(/"/g, '`"')}"
+Write-Host "Print job sent successfully"
+`;
 
-          exec(printCmd, { timeout: 15000 }, (printError, stdout, stderr) => {
-            console.log('📥 Print command callback triggered');
+          const psCommand = `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "${psScript.replace(/\n/g, '; ').replace(/"/g, '\\"')}"`;
 
-            if (!printError) {
-              console.log('✅ Print command successful');
-              console.log('stdout:', stdout);
-              try { fs.unlinkSync(tempFile); } catch(e) {}
+          console.log(`🚀 Executing PowerShell print command`);
+          console.log(`📄 Temp file: ${tempFile}`);
+          console.log(`🖨️ Target printer: ${printerInfo.printer}`);
+
+          exec(psCommand, {
+            timeout: 30000,
+            windowsHide: true
+          }, (printError, stdout, stderr) => {
+            console.log('📥 Print callback triggered');
+
+            // Clean up temp file
+            try { fs.unlinkSync(tempFile); } catch(e) {
+              console.log('⚠️ Could not delete temp file:', e.message);
+            }
+
+            if (printError) {
+              console.error('❌ Windows print failed:', printError.message);
+              if (stderr) console.error('stderr:', stderr);
+
+              res.message = `ERROR: Tidak dapat mencetak ke ${printerInfo.printer}. ${printError.message}`;
+              res.status = 500;
+
+              if (jobId) {
+                updatePrintJobStatus(jobId, PrintJobStatus.ERROR, res.message, 0, printError.message);
+              }
+            } else {
+              console.log('✅ Print sent to Windows spooler');
+              if (stdout) console.log('stdout:', stdout);
+
               res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
               res.status = 200;
 
-              // Update job status: Success
               if (jobId) {
                 updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, res.message, 100);
               }
-
-              console.log('🎯 Calling callback with success');
-              return callback(res);
             }
 
-            console.log('⚠️ Print command failed:', printError.message);
-            console.log('stderr:', stderr);
-
-            // Update job status: Trying Method 2
-            if (jobId) {
-              updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Trying PowerShell method...', 80);
-            }
-
-            // Method 2: PowerShell Out-Printer (modern Windows method)
-            const psCommand = `powershell -Command "& {Get-Content '${tempFile.replace(/\\/g, '\\\\')}' -Raw | Out-Printer -Name '${printerInfo.printer}'}"`;
-            console.log(`🚀 Executing PowerShell: ${psCommand}`);
-
-            exec(psCommand, { timeout: 15000 }, (psError, psStdout, psStderr) => {
-              console.log('📥 PowerShell callback triggered');
-
-              if (!psError) {
-                console.log('✅ PowerShell print successful');
-                try { fs.unlinkSync(tempFile); } catch(e) {}
-                res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
-                res.status = 200;
-
-                // Update job status: Success
-                if (jobId) {
-                  updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, res.message, 100);
-                }
-
-                console.log('🎯 Calling callback with PowerShell success');
-                return callback(res);
-              }
-
-              console.log('⚠️ PowerShell method failed:', psError.message);
-              console.log('psStderr:', psStderr);
-
-              // Update job status: Trying Method 3
-              if (jobId) {
-                updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Trying copy to printer port...', 85);
-              }
-
-              // Method 3: Copy to printer port (thermal printer compatible)
-              const copyCommand = `copy /B "${tempFile}" "\\\\localhost\\${printerInfo.printer}"`;
-              console.log(`🚀 Executing copy command: ${copyCommand}`);
-
-              exec(copyCommand, { timeout: 15000 }, (copyError, copyStdout, copyStderr) => {
-                console.log('📥 Copy command callback triggered');
-
-                try { fs.unlinkSync(tempFile); } catch(e) {}
-
-                if (copyError) {
-                  console.error('❌ All Windows print methods failed. Details:', {
-                    printerName: printerInfo.printer,
-                    printError: printError.message,
-                    powershellError: psError.message,
-                    copyError: copyError.message,
-                    tempFile: tempFile,
-                    fileExists: fs.existsSync(tempFile)
-                  });
-                  res.message = `ERROR: Tidak dapat mencetak ke ${printerInfo.printer}. Pastikan printer aktif dan terpasang dengan benar.`;
-                  res.status = 500;
-
-                  // Update job status: Error
-                  if (jobId) {
-                    updatePrintJobStatus(jobId, PrintJobStatus.ERROR, res.message, 0, copyError.message);
-                  }
-
-                  console.log('🎯 Calling callback with error');
-                } else {
-                  console.log('✅ Copy to printer successful');
-                  res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
-                  res.status = 200;
-
-                  // Update job status: Success
-                  if (jobId) {
-                    updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, res.message, 100);
-                  }
-
-                  console.log('🎯 Calling callback with copy success');
-                }
-                return callback(res);
-              });
-            });
+            console.log('🎯 Calling callback');
+            return callback(res);
           });
         } else {
           // Unix/Mac: Use lp command
@@ -1066,11 +1012,6 @@ app.get('/printers', (req, res) => {
 // Redirect /debug.html to /html/debug.html for easier access
 app.get('/debug.html', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/html/debug.html'));
-});
-
-// Redirect /test.html to /html/test.html for easier access
-app.get('/test.html', (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/html/test.html'));
 });
 
 app.get('/', (req, res) => {

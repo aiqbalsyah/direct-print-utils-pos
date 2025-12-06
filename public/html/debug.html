@@ -1,53 +1,280 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Direct Print Test</title>
+    <title>Direct Print Debug Console</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .container { max-width: 800px; margin: 0 auto; }
-        .section { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
-        button { background: #007cba; color: white; padding: 10px 15px; border: none; border-radius: 3px; cursor: pointer; margin: 5px; }
-        button:hover { background: #005a87; }
-        .success { color: green; background: #e8f5e8; padding: 10px; border-radius: 3px; }
-        .error { color: red; background: #ffe8e8; padding: 10px; border-radius: 3px; }
-        .log { background: #f0f0f0; padding: 10px; font-family: monospace; white-space: pre-wrap; max-height: 200px; overflow-y: auto; border: 1px solid #ccc; }
-        select, input { padding: 8px; margin: 5px; border: 1px solid #ccc; border-radius: 3px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f7fa; }
+
+        /* Header with connection status */
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header h1 { font-size: 24px; margin-bottom: 10px; }
+        .connection-status {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .connection-status.connected {
+            background: #10b981;
+            color: white;
+        }
+        .connection-status.disconnected {
+            background: #ef4444;
+            color: white;
+        }
+
+        /* Current Job Status Card */
+        .current-job-card {
+            background: white;
+            margin: 20px;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            display: none;
+        }
+        .current-job-card.active { display: block; }
+        .current-job-card h3 { margin-bottom: 15px; color: #333; }
+        .job-info { display: grid; grid-template-columns: 120px 1fr; gap: 10px; margin-bottom: 15px; }
+        .job-info-label { font-weight: bold; color: #666; }
+        .job-info-value { color: #333; }
+
+        /* Visual Progress Bar */
+        .progress-container {
+            background: #e5e7eb;
+            height: 30px;
+            border-radius: 15px;
+            overflow: hidden;
+            position: relative;
+            margin: 15px 0;
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        .progress-bar.success { background: linear-gradient(90deg, #10b981 0%, #059669 100%); }
+        .progress-bar.error { background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%); }
+
+        /* Container */
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+        /* Section Cards */
+        .section {
+            background: white;
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 18px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 8px;
+        }
+
+        /* Buttons */
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-weight: 500;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        button:active { transform: translateY(0); }
+
+        /* Form Elements */
+        select, input, textarea {
+            padding: 10px;
+            margin: 5px;
+            border: 2px solid #e5e7eb;
+            border-radius: 5px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+        select:focus, input:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        /* Status Messages */
+        .success {
+            color: #059669;
+            background: #d1fae5;
+            padding: 12px;
+            border-radius: 5px;
+            border-left: 4px solid #10b981;
+            margin: 10px 0;
+        }
+        .error {
+            color: #dc2626;
+            background: #fee2e2;
+            padding: 12px;
+            border-radius: 5px;
+            border-left: 4px solid #ef4444;
+            margin: 10px 0;
+        }
+
+        /* Console Log */
+        .log {
+            background: #1f2937;
+            color: #10b981;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+            border-radius: 5px;
+            border: 1px solid #374151;
+        }
+        .log::-webkit-scrollbar { width: 8px; }
+        .log::-webkit-scrollbar-track { background: #374151; }
+        .log::-webkit-scrollbar-thumb { background: #667eea; border-radius: 4px; }
+
+        /* Print History Table */
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        .history-table th {
+            background: #f3f4f6;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #374151;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        .history-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #f3f4f6;
+        }
+        .history-table tr:hover {
+            background: #f9fafb;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+        .status-badge.success { background: #d1fae5; color: #059669; }
+        .status-badge.error { background: #fee2e2; color: #dc2626; }
+        .status-badge.pending { background: #fef3c7; color: #d97706; }
+        .status-badge.printing { background: #dbeafe; color: #2563eb; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container { padding: 10px; }
+            .section { padding: 15px; }
+            .job-info { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
+    <!-- Header with Connection Status -->
+    <div class="header">
+        <h1>🖨️ Direct Print Debug Console</h1>
+        <span id="connectionStatus" class="connection-status disconnected">⚫ Disconnected</span>
+    </div>
+
     <div class="container">
-        <h1>🖨️ Direct Print Test & Debug</h1>
-        
+        <!-- Current Job Status -->
+        <div id="currentJobCard" class="current-job-card">
+            <h3>📋 Current Print Job</h3>
+            <div class="job-info">
+                <div class="job-info-label">Job ID:</div>
+                <div class="job-info-value" id="currentJobId">-</div>
+                <div class="job-info-label">Status:</div>
+                <div class="job-info-value" id="currentJobStatus">-</div>
+                <div class="job-info-label">Printer:</div>
+                <div class="job-info-value" id="currentJobPrinter">-</div>
+                <div class="job-info-label">Message:</div>
+                <div class="job-info-value" id="currentJobMessage">-</div>
+            </div>
+            <div class="progress-container">
+                <div id="currentJobProgress" class="progress-bar" style="width: 0%">0%</div>
+            </div>
+        </div>
+
+        <!-- Printer Status Section -->
         <div class="section">
             <h2>📋 Printer Status</h2>
-            <button onclick="checkPrinters()">Refresh Printers</button>
-            <button onclick="checkStatus()">Check Status</button>
+            <button onclick="checkPrinters()">🔄 Refresh Printers</button>
+            <button onclick="checkStatus()">✅ Check Status</button>
             <div id="printerStatus"></div>
         </div>
-        
+
+        <!-- Test Print Section -->
         <div class="section">
             <h2>🧪 Test Print</h2>
-            <label>Select Printer:</label>
+            <label><strong>Select Printer:</strong></label>
             <select id="printerSelect">
                 <option value="auto">Auto Detect</option>
             </select><br>
-            <button onclick="testPrint()">Test Print Simple</button>
-            <button onclick="testPrintReceipt()">Test Receipt Print</button>
-            <button onclick="testEscPosClean()">Test ESC/POS Cleaning</button>
+            <button onclick="testPrint()">📄 Test Print Simple</button>
+            <button onclick="testPrintReceipt()">🧾 Test Receipt Print</button>
+            <button onclick="testEscPosClean()">🧹 Test ESC/POS Cleaning</button>
             <div id="testResult"></div>
         </div>
-        
+
+        <!-- Print History Section -->
+        <div class="section">
+            <h2>📊 Print History (Last 5 Jobs)</h2>
+            <table class="history-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Job ID</th>
+                        <th>Printer</th>
+                        <th>Status</th>
+                        <th>Message</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTableBody">
+                    <tr>
+                        <td colspan="5" style="text-align: center; color: #9ca3af;">No print jobs yet</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Console Log Section -->
         <div class="section">
             <h2>💻 Console Log</h2>
-            <button onclick="clearLog()">Clear Log</button>
+            <button onclick="clearLog()">🗑️ Clear Log</button>
             <div id="consoleLog" class="log"></div>
         </div>
-        
+
+        <!-- Manual Print Test Section -->
         <div class="section">
             <h2>🔧 Manual Print Test</h2>
-            <textarea id="customText" rows="10" cols="50" placeholder="Enter text to print...">
-=============================
-        MANUAL TEST         
+            <textarea id="customText" rows="10" style="width: 100%; font-family: monospace;" placeholder="Enter text to print...">=============================
+        MANUAL TEST
 =============================
 Date: ${new Date().toLocaleString()}
 This is a manual test print
@@ -57,8 +284,8 @@ Line 3: Special chars !@#$%
 =============================
 End test
 =============================
-            </textarea><br>
-            <button onclick="printCustom()">Print Custom Text</button>
+</textarea><br>
+            <button onclick="printCustom()">📤 Print Custom Text</button>
             <div id="customResult"></div>
         </div>
     </div>
@@ -67,7 +294,77 @@ End test
     <script>
         const socket = io();
         let printers = [];
+        let currentJobId = null;
+        let printHistory = [];
 
+        // Update connection status indicator
+        function updateConnectionStatus(connected) {
+            const statusEl = document.getElementById('connectionStatus');
+            if (connected) {
+                statusEl.className = 'connection-status connected';
+                statusEl.textContent = '🟢 Connected';
+            } else {
+                statusEl.className = 'connection-status disconnected';
+                statusEl.textContent = '🔴 Disconnected';
+            }
+        }
+
+        // Update current job display
+        function updateCurrentJob(jobId, status, message, progress, printer) {
+            const card = document.getElementById('currentJobCard');
+            const progressBar = document.getElementById('currentJobProgress');
+
+            if (jobId) {
+                card.classList.add('active');
+                document.getElementById('currentJobId').textContent = jobId;
+                document.getElementById('currentJobStatus').textContent = status || '-';
+                document.getElementById('currentJobPrinter').textContent = printer || '-';
+                document.getElementById('currentJobMessage').textContent = message || '-';
+
+                // Update progress bar
+                progressBar.style.width = `${progress || 0}%`;
+                progressBar.textContent = `${progress || 0}%`;
+
+                // Update progress bar color based on status
+                progressBar.className = 'progress-bar';
+                if (status === 'success') progressBar.classList.add('success');
+                if (status === 'error') progressBar.classList.add('error');
+
+                // Hide card after 5 seconds if completed
+                if (status === 'success' || status === 'error') {
+                    setTimeout(() => {
+                        if (document.getElementById('currentJobId').textContent === jobId) {
+                            card.classList.remove('active');
+                        }
+                    }, 5000);
+                }
+            }
+        }
+
+        // Add to print history
+        function addToHistory(jobId, printer, status, message) {
+            const timestamp = new Date().toLocaleTimeString();
+            printHistory.unshift({ timestamp, jobId, printer, status, message });
+
+            // Keep only last 5
+            if (printHistory.length > 5) {
+                printHistory = printHistory.slice(0, 5);
+            }
+
+            // Update table
+            const tbody = document.getElementById('historyTableBody');
+            tbody.innerHTML = printHistory.map(job => `
+                <tr>
+                    <td>${job.timestamp}</td>
+                    <td style="font-family: monospace; font-size: 11px;">${job.jobId}</td>
+                    <td>${job.printer || 'Auto'}</td>
+                    <td><span class="status-badge ${job.status}">${job.status}</span></td>
+                    <td>${job.message}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Log function
         function log(message) {
             const logDiv = document.getElementById('consoleLog');
             const timestamp = new Date().toLocaleTimeString();
@@ -79,40 +376,34 @@ End test
             document.getElementById('consoleLog').textContent = '';
         }
 
-        // Store current print job ID for tracking
-        let currentJobId = null;
-
         // Socket event listeners
         socket.on('connect', () => {
+            updateConnectionStatus(true);
             log('✅ Connected to server');
             checkPrinters();
         });
 
         socket.on('disconnect', () => {
+            updateConnectionStatus(false);
             log('❌ Disconnected from server');
         });
 
-        // New event: Print job created
         socket.on('print-job-created', (data) => {
             currentJobId = data.jobId;
             log(`📝 Print job created: ${data.jobId}`);
-            log(`📊 Status: ${data.status} - ${data.message}`);
+            updateCurrentJob(data.jobId, data.status, data.message, 0, 'Detecting...');
         });
 
-        // New event: Real-time print status updates
         socket.on('print-status', (status) => {
-            const timestamp = new Date(status.timestamp).toLocaleTimeString();
             const statusEmoji = {
-                'pending': '⏳',
-                'preparing': '🔄',
-                'sending': '📤',
-                'printing': '🖨️',
-                'success': '✅',
-                'error': '❌',
-                'cancelled': '🚫'
+                'pending': '⏳', 'preparing': '🔄', 'sending': '📤',
+                'printing': '🖨️', 'success': '✅', 'error': '❌', 'cancelled': '🚫'
             }[status.status] || '📋';
 
             log(`${statusEmoji} [${status.jobId}] ${status.status.toUpperCase()} - ${status.message} (${status.progress}%)`);
+
+            updateCurrentJob(status.jobId, status.status, status.message, status.progress,
+                document.getElementById('printerSelect').value);
 
             if (status.error) {
                 log(`   ❌ Error details: ${status.error}`);
@@ -121,9 +412,15 @@ End test
 
         socket.on('print-response', (response) => {
             log(`📄 Final print response: ${JSON.stringify(response)}`);
+
+            const status = response.status === 200 ? 'success' : 'error';
+            const printer = document.getElementById('printerSelect').value;
+
             if (response.jobId) {
                 log(`   Job ID: ${response.jobId}`);
+                addToHistory(response.jobId, printer, status, response.message);
             }
+
             if (response.status === 200) {
                 log(`   ✅ SUCCESS: ${response.message}`);
             } else {
@@ -137,11 +434,11 @@ End test
                 log('🔍 Checking printers...');
                 const response = await fetch('/printers');
                 const data = await response.json();
-                
+
                 printers = data.printers || [];
                 const select = document.getElementById('printerSelect');
                 select.innerHTML = '<option value="auto">Auto Detect</option>';
-                
+
                 printers.forEach(printer => {
                     const option = document.createElement('option');
                     option.value = printer;
@@ -160,8 +457,8 @@ End test
                         <strong>Platform:</strong> ${data.platform}
                     </div>
                 `;
-                
-                log(`Found printers: ${printers.join(', ')}`);
+
+                log(`✅ Found printers: ${printers.join(', ')}`);
             } catch (error) {
                 log(`❌ Error checking printers: ${error.message}`);
                 document.getElementById('printerStatus').innerHTML = `
@@ -170,21 +467,19 @@ End test
             }
         }
 
-        // Check printer status
         async function checkStatus() {
             try {
                 const response = await fetch('/printer-status');
                 const data = await response.json();
-                log(`Printer status: ${JSON.stringify(data)}`);
+                log(`📊 Printer status: ${JSON.stringify(data)}`);
             } catch (error) {
                 log(`❌ Error checking status: ${error.message}`);
             }
         }
 
-        // Test simple print
         async function testPrint() {
             const printer = document.getElementById('printerSelect').value;
-            
+
             try {
                 log(`🧪 Testing print to: ${printer}`);
                 const response = await fetch('/test-print', {
@@ -192,90 +487,85 @@ End test
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ printer: printer === 'auto' ? null : printer })
                 });
-                
+
                 const result = await response.json();
-                
-                document.getElementById('testResult').innerHTML = result.status === 200 
+
+                document.getElementById('testResult').innerHTML = result.status === 200
                     ? `<div class="success">${result.message}</div>`
                     : `<div class="error">${result.message}</div>`;
-                    
-                log(`Test result: ${JSON.stringify(result)}`);
+
+                log(`📋 Test result: ${JSON.stringify(result)}`);
             } catch (error) {
                 log(`❌ Test print error: ${error.message}`);
                 document.getElementById('testResult').innerHTML = `<div class="error">Error: ${error.message}</div>`;
             }
         }
 
-        // Test receipt print via WebSocket
         function testPrintReceipt() {
             const printer = document.getElementById('printerSelect').value;
-            
+
             const receiptData = `
 =============================
-         RECEIPT TEST        
+         RECEIPT TEST
 =============================
-TRX ID    : TEST123
+TRX ID    : TEST${Math.floor(Math.random() * 1000)}
 DATE      : ${new Date().toLocaleDateString()}
 TIME      : ${new Date().toLocaleTimeString()}
 PRINTER   : ${printer}
 =============================
-ITEM                   QTY  
-Test Product            1   
+ITEM                   QTY
+Test Product            1
 Sub Total          : 10.00
-Tax               :  1.00
-Total             : 11.00
+Tax                :  1.00
+Total              : 11.00
 =============================
-      Thank You!        
+      Thank You!
 =============================
 
 
 `;
 
-            log(`🧪 WebSocket receipt test to: ${printer}`);
+            log(`🧾 WebSocket receipt test to: ${printer}`);
             socket.emit('print', {
                 printerType: printer,
                 dataPrint: receiptData
             });
-            
-            document.getElementById('testResult').innerHTML = '<div>Receipt test sent via WebSocket...</div>';
+
+            document.getElementById('testResult').innerHTML = '<div class="success">Receipt test sent via WebSocket...</div>';
         }
 
-        // Test ESC/POS command cleaning
         function testEscPosClean() {
             const printer = document.getElementById('printerSelect').value;
-            
-            // Create test data with ESC/POS commands
-            const escPosData = `\x1B@\x1B!\x00=============================\n\x1B!\x01      ESC/POS TEST      \x1B!\x00\n=============================\nDATE      : ${new Date().toLocaleDateString()}\nTIME      : ${new Date().toLocaleTimeString()}\nPRINTER   : ${printer}\n\x1Ba\x01CENTERED TEXT\x1Ba\x00\n=============================\n\x1B!\x01BOLD ITEM\x1B!\x00                1\nNormal text here\n\x1B!\x08Small text\x1B!\x00\n=============================\n      Thank You!        \n\x1Ba\x02Right aligned\x1Ba\x00\n=============================\n\n\n\x1Bm`;
+
+            const escPosData = `\x1B@\x1B!\x00=============================\n\x1B!\x01      ESC/POS TEST      \x1B!\x00\n=============================\nDATE      : ${new Date().toLocaleDateString()}\nTIME      : ${new Date().toLocaleTimeString()}\n\x1Ba\x01CENTERED TEXT\x1Ba\x00\n=============================\n\x1B!\x01BOLD ITEM\x1B!\x00                1\nNormal text here\n=============================\n      Thank You!        \n=============================\n\n\n`;
 
             log(`🧹 ESC/POS cleaning test to: ${printer}`);
             log(`📋 Original data length: ${escPosData.length} bytes`);
-            log(`🔍 Raw data preview: ${escPosData.substring(0, 100).replace(/\x1B/g, '\\x1B')}...`);
-            
+
             socket.emit('print', {
                 printerType: printer,
                 dataPrint: escPosData
             });
-            
+
             document.getElementById('testResult').innerHTML = '<div class="success">ESC/POS test data sent - check console for cleaning process!</div>';
         }
 
-        // Print custom text
         function printCustom() {
             const printer = document.getElementById('printerSelect').value;
             const customText = document.getElementById('customText').value;
-            
+
             log(`📝 Custom print to: ${printer}`);
             socket.emit('print', {
                 printerType: printer,
                 dataPrint: customText
             });
-            
-            document.getElementById('customResult').innerHTML = '<div>Custom text sent for printing...</div>';
+
+            document.getElementById('customResult').innerHTML = '<div class="success">Custom text sent for printing...</div>';
         }
 
         // Initialize on page load
         window.onload = () => {
-            log('🚀 Page loaded, connecting...');
+            log('🚀 Debug console loaded, connecting...');
         };
     </script>
 </body>

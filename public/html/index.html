@@ -1,8 +1,466 @@
-<html>
-    <head>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Direct Print Server - Installation Verified</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
 
-    </head>
-    <body>
-        <h1>WAKWAW</h1>
-    </body>
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 800px;
+            width: 100%;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+        }
+
+        .header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+
+        .status-section {
+            padding: 40px;
+        }
+
+        .status-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-left: 5px solid #10b981;
+        }
+
+        .status-card.loading {
+            border-left-color: #f59e0b;
+        }
+
+        .status-card.error {
+            border-left-color: #ef4444;
+        }
+
+        .status-card h2 {
+            color: #333;
+            font-size: 20px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .status-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .status-item label {
+            display: block;
+            font-size: 12px;
+            color: #6b7280;
+            margin-bottom: 5px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-item .value {
+            font-size: 18px;
+            color: #111827;
+            font-weight: 600;
+        }
+
+        .status-item .value.success {
+            color: #10b981;
+        }
+
+        .status-item .value.error {
+            color: #ef4444;
+        }
+
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .feature-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            border: 2px solid #e5e7eb;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .feature-card:hover {
+            border-color: #667eea;
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.2);
+        }
+
+        .feature-card .icon {
+            font-size: 40px;
+            margin-bottom: 10px;
+        }
+
+        .feature-card h3 {
+            font-size: 14px;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .feature-card p {
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        .actions {
+            padding: 0 40px 40px;
+        }
+
+        .button-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .btn {
+            padding: 15px 25px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: white;
+            color: #667eea;
+            border: 2px solid #667eea;
+        }
+
+        .btn-secondary:hover {
+            background: #f3f4f6;
+        }
+
+        .footer {
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            font-size: 14px;
+            color: #6b7280;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .spinner {
+            border: 3px solid #f3f4f6;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .badge.online {
+            background: #d1fae5;
+            color: #059669;
+        }
+
+        .badge.offline {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        @media (max-width: 768px) {
+            .status-grid {
+                grid-template-columns: 1fr;
+            }
+            .header h1 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>
+                <span>🖨️</span>
+                <span>Direct Print Server</span>
+            </h1>
+            <p>Thermal Printer Service for Windows</p>
+        </div>
+
+        <!-- Status Section -->
+        <div class="status-section">
+            <div id="statusCard" class="status-card loading">
+                <h2>
+                    <span id="statusIcon">⏳</span>
+                    <span id="statusTitle">Checking Installation...</span>
+                    <span id="statusBadge" class="badge offline">Checking</span>
+                </h2>
+
+                <div class="status-grid">
+                    <div class="status-item">
+                        <label>Server Status</label>
+                        <div class="value" id="serverStatus">
+                            <span class="spinner"></span> Checking...
+                        </div>
+                    </div>
+                    <div class="status-item">
+                        <label>Server Port</label>
+                        <div class="value" id="serverPort">4000</div>
+                    </div>
+                    <div class="status-item">
+                        <label>Available Printers</label>
+                        <div class="value" id="printerCount">
+                            <span class="spinner"></span>
+                        </div>
+                    </div>
+                    <div class="status-item">
+                        <label>Default Printer</label>
+                        <div class="value" id="defaultPrinter">
+                            <span class="spinner"></span>
+                        </div>
+                    </div>
+                    <div class="status-item">
+                        <label>Platform</label>
+                        <div class="value" id="platform">-</div>
+                    </div>
+                    <div class="status-item">
+                        <label>WebSocket</label>
+                        <div class="value" id="websocketStatus">
+                            <span class="spinner"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Features -->
+            <div class="features">
+                <div class="feature-card">
+                    <div class="icon">✅</div>
+                    <h3>Auto Detection</h3>
+                    <p>Automatic printer detection</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon">🖨️</div>
+                    <h3>System Printers</h3>
+                    <p>Works with Windows printers</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon">🚀</div>
+                    <h3>Real-time</h3>
+                    <p>WebSocket support</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon">🔧</div>
+                    <h3>Easy Setup</h3>
+                    <p>No configuration needed</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="actions">
+            <div class="button-group">
+                <a href="/debug.html" class="btn btn-primary">
+                    🧪 Open Debug Console
+                </a>
+                <button onclick="refreshStatus()" class="btn btn-secondary">
+                    🔄 Refresh Status
+                </button>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p><strong>API Endpoint:</strong> http://localhost:4000</p>
+            <p style="margin-top: 5px;">Direct Print Server is running and ready to accept print jobs</p>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        let socket;
+        let serverOnline = false;
+
+        // Initialize
+        async function init() {
+            await checkServerStatus();
+            await checkPrinters();
+            initWebSocket();
+        }
+
+        // Check server status
+        async function checkServerStatus() {
+            try {
+                const response = await fetch('/printer-status');
+                const data = await response.json();
+
+                serverOnline = true;
+                updateStatusCard(true);
+
+                document.getElementById('serverStatus').innerHTML =
+                    '<span class="success">✅ Online</span>';
+
+            } catch (error) {
+                serverOnline = false;
+                updateStatusCard(false);
+
+                document.getElementById('serverStatus').innerHTML =
+                    '<span class="error">❌ Offline</span>';
+            }
+        }
+
+        // Check printers
+        async function checkPrinters() {
+            try {
+                const response = await fetch('/printers');
+                const data = await response.json();
+
+                document.getElementById('printerCount').textContent = data.printers.length;
+                document.getElementById('defaultPrinter').textContent =
+                    data.defaultPrinter || 'None';
+                document.getElementById('platform').textContent =
+                    data.platform.toUpperCase();
+
+            } catch (error) {
+                document.getElementById('printerCount').innerHTML =
+                    '<span class="error">Error</span>';
+                document.getElementById('defaultPrinter').innerHTML =
+                    '<span class="error">Error</span>';
+                document.getElementById('platform').textContent = 'Unknown';
+            }
+        }
+
+        // Initialize WebSocket
+        function initWebSocket() {
+            socket = io();
+
+            socket.on('connect', () => {
+                document.getElementById('websocketStatus').innerHTML =
+                    '<span class="success">✅ Connected</span>';
+            });
+
+            socket.on('disconnect', () => {
+                document.getElementById('websocketStatus').innerHTML =
+                    '<span class="error">❌ Disconnected</span>';
+            });
+
+            socket.on('connect_error', () => {
+                document.getElementById('websocketStatus').innerHTML =
+                    '<span class="error">❌ Error</span>';
+            });
+        }
+
+        // Update status card
+        function updateStatusCard(online) {
+            const card = document.getElementById('statusCard');
+            const icon = document.getElementById('statusIcon');
+            const title = document.getElementById('statusTitle');
+            const badge = document.getElementById('statusBadge');
+
+            if (online) {
+                card.className = 'status-card';
+                icon.textContent = '✅';
+                title.textContent = 'Installation Verified - Server Running';
+                badge.className = 'badge online';
+                badge.textContent = 'Online';
+            } else {
+                card.className = 'status-card error';
+                icon.textContent = '❌';
+                title.textContent = 'Server Offline';
+                badge.className = 'badge offline';
+                badge.textContent = 'Offline';
+            }
+        }
+
+        // Refresh status
+        async function refreshStatus() {
+            // Show loading
+            document.getElementById('serverStatus').innerHTML =
+                '<span class="spinner"></span> Checking...';
+            document.getElementById('printerCount').innerHTML =
+                '<span class="spinner"></span>';
+            document.getElementById('defaultPrinter').innerHTML =
+                '<span class="spinner"></span>';
+            document.getElementById('websocketStatus').innerHTML =
+                '<span class="spinner"></span>';
+
+            // Reload status
+            await init();
+        }
+
+        // Run on page load
+        window.onload = init;
+    </script>
+</body>
 </html>

@@ -212,6 +212,19 @@ jobs:
                       <!-- Add custom banner image (493 x 58 pixels) -->
                       <WixVariable Id="WixUIBannerBmp" Value="installer\resources\banner.bmp" />
 
+                      <!-- Custom Actions for Install/Uninstall Scripts -->
+                      <CustomAction Id="RunPreUninstall"
+                                    FileKey="PreUninstallBat"
+                                    ExeCommand=""
+                                    Execute="deferred"
+                                    Impersonate="no"
+                                    Return="ignore" />
+
+                      <InstallExecuteSequence>
+                        <!-- Run pre-uninstall script before RemoveFiles during uninstall -->
+                        <Custom Action="RunPreUninstall" Before="RemoveFiles">REMOVE~="ALL"</Custom>
+                      </InstallExecuteSequence>
+
                       <!-- Custom UI messages -->
                       <UI>
                         <Error Id="1001">ADMINISTRATOR PRIVILEGES REQUIRED - Please right-click the MSI file and select Run as administrator. This installer needs admin privileges to install to Program Files and configure Windows system settings.</Error>
