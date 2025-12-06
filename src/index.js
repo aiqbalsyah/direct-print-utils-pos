@@ -685,8 +685,11 @@ function printSend(cmds, callback, jobId = null) {
 
           // Method 1: Traditional print command (most compatible)
           const printCmd = `print /D:"${printerInfo.printer}" "${tempFile}"`;
+          console.log(`🚀 Executing: ${printCmd}`);
 
           exec(printCmd, { timeout: 15000 }, (printError, stdout, stderr) => {
+            console.log('📥 Print command callback triggered');
+
             if (!printError) {
               console.log('✅ Print command successful');
               console.log('stdout:', stdout);
@@ -699,6 +702,7 @@ function printSend(cmds, callback, jobId = null) {
                 updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, res.message, 100);
               }
 
+              console.log('🎯 Calling callback with success');
               return callback(res);
             }
 
@@ -712,7 +716,11 @@ function printSend(cmds, callback, jobId = null) {
 
             // Method 2: PowerShell Out-Printer (modern Windows method)
             const psCommand = `powershell -Command "& {Get-Content '${tempFile.replace(/\\/g, '\\\\')}' -Raw | Out-Printer -Name '${printerInfo.printer}'}"`;
+            console.log(`🚀 Executing PowerShell: ${psCommand}`);
+
             exec(psCommand, { timeout: 15000 }, (psError, psStdout, psStderr) => {
+              console.log('📥 PowerShell callback triggered');
+
               if (!psError) {
                 console.log('✅ PowerShell print successful');
                 try { fs.unlinkSync(tempFile); } catch(e) {}
@@ -724,6 +732,7 @@ function printSend(cmds, callback, jobId = null) {
                   updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, res.message, 100);
                 }
 
+                console.log('🎯 Calling callback with PowerShell success');
                 return callback(res);
               }
 
@@ -737,7 +746,11 @@ function printSend(cmds, callback, jobId = null) {
 
               // Method 3: Copy to printer port (thermal printer compatible)
               const copyCommand = `copy /B "${tempFile}" "\\\\localhost\\${printerInfo.printer}"`;
+              console.log(`🚀 Executing copy command: ${copyCommand}`);
+
               exec(copyCommand, { timeout: 15000 }, (copyError, copyStdout, copyStderr) => {
+                console.log('📥 Copy command callback triggered');
+
                 try { fs.unlinkSync(tempFile); } catch(e) {}
 
                 if (copyError) {
@@ -756,6 +769,8 @@ function printSend(cmds, callback, jobId = null) {
                   if (jobId) {
                     updatePrintJobStatus(jobId, PrintJobStatus.ERROR, res.message, 0, copyError.message);
                   }
+
+                  console.log('🎯 Calling callback with error');
                 } else {
                   console.log('✅ Copy to printer successful');
                   res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
@@ -765,6 +780,8 @@ function printSend(cmds, callback, jobId = null) {
                   if (jobId) {
                     updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, res.message, 100);
                   }
+
+                  console.log('🎯 Calling callback with copy success');
                 }
                 return callback(res);
               });
@@ -1044,6 +1061,16 @@ app.get('/printers', (req, res) => {
       });
     });
   });
+});
+
+// Redirect /debug.html to /html/debug.html for easier access
+app.get('/debug.html', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/html/debug.html'));
+});
+
+// Redirect /test.html to /html/test.html for easier access
+app.get('/test.html', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/html/test.html'));
 });
 
 app.get('/', (req, res) => {
