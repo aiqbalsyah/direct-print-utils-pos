@@ -3,6 +3,10 @@
 > **Thermal Printer Service untuk Windows, Mac, dan Linux**
 > Server printing yang mendukung thermal printer dan system printer dengan WebSocket real-time tracking.
 
+[![GitHub Release](https://img.shields.io/github/v/release/aiqbalsyah/direct-print-utils-pos)](https://github.com/aiqbalsyah/direct-print-utils-pos/releases)
+[![GitHub Issues](https://img.shields.io/github/issues/aiqbalsyah/direct-print-utils-pos)](https://github.com/aiqbalsyah/direct-print-utils-pos/issues)
+[![License](https://img.shields.io/badge/license-ISC-blue.svg)](LICENSE)
+
 ---
 
 ## 📋 Daftar Isi
@@ -68,7 +72,7 @@
 **Instalasi paling mudah untuk Windows dengan Windows Service integration.**
 
 #### Download & Install:
-1. Download `DirectPrintServer.msi` dari [GitHub Releases](https://github.com/your-repo/releases)
+1. Download `DirectPrintServer.msi` dari [GitHub Releases](https://github.com/aiqbalsyah/direct-print-utils-pos/releases)
 2. **RIGHT-CLICK** pada file MSI → **"Run as administrator"**
 3. Follow installation wizard
 4. Service akan otomatis start
@@ -101,7 +105,7 @@ Anda akan melihat halaman status yang menampilkan:
 **Untuk testing atau deployment tanpa installer.**
 
 #### Download & Run:
-1. Download `direct-print-win.exe` dari [GitHub Releases](https://github.com/your-repo/releases)
+1. Download `direct-print-win.exe` dari [GitHub Releases](https://github.com/aiqbalsyah/direct-print-utils-pos/releases)
 2. Double-click `direct-print-win.exe`
 3. Server akan start di port 4000
 
@@ -127,8 +131,8 @@ npm --version
 #### Clone & Install:
 ```bash
 # Clone repository
-git clone https://github.com/your-repo/direct-print.git
-cd direct-print
+git clone https://github.com/aiqbalsyah/direct-print-utils-pos.git
+cd direct-print-utils-pos
 
 # Install dependencies
 npm install
@@ -691,8 +695,8 @@ THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH RE
 ### For Developers
 
 ```bash
-git clone https://github.com/your-repo/direct-print.git
-cd direct-print
+git clone https://github.com/aiqbalsyah/direct-print-utils-pos.git
+cd direct-print-utils-pos
 npm install
 npm start
 ```
