@@ -80,12 +80,38 @@ jobs:
                   )
                   echo "✅ Executable copied successfully"
 
-                  echo "Copying logo..."
-                  copy "public\logo.png" "installer\resources\logo.png"
-                  if %ERRORLEVEL% NEQ 0 (
-                    echo "⚠️ Logo not found, continuing without logo..."
+                  echo "Copying logo, icon, and banner images..."
+                  if exist "public\logo.bmp" (
+                    copy "public\logo.bmp" "installer\resources\logo.bmp"
+                    if %ERRORLEVEL% EQU 0 (
+                      echo "✅ Logo BMP copied successfully"
+                    ) else (
+                      echo "⚠️ Logo BMP copy failed, continuing..."
+                    )
                   ) else (
-                    echo "✅ Logo copied successfully"
+                    echo "⚠️ Logo.bmp not found, continuing..."
+                  )
+
+                  if exist "public\logo.ico" (
+                    copy "public\logo.ico" "installer\resources\app.ico"
+                    if %ERRORLEVEL% EQU 0 (
+                      echo "✅ Application icon (ICO) copied successfully"
+                    ) else (
+                      echo "⚠️ Icon copy failed, continuing without icon..."
+                    )
+                  ) else (
+                    echo "⚠️ Logo.ico not found, continuing without icon..."
+                  )
+
+                  if exist "public\banner.bmp" (
+                    copy "public\banner.bmp" "installer\resources\banner.bmp"
+                    if %ERRORLEVEL% EQU 0 (
+                      echo "✅ Banner image copied successfully"
+                    ) else (
+                      echo "⚠️ Banner copy failed, continuing without banner..."
+                    )
+                  ) else (
+                    echo "⚠️ Banner.bmp not found, continuing without banner..."
                   )
 
                   echo "Copying scripts..."
@@ -108,95 +134,6 @@ jobs:
                   echo "✅ MSI structure prepared"
               shell: cmd
 
-            - name: Convert logo to BMP format for WiX
-              run: |
-                  echo "Converting logo to BMP format for WiX installer..."
-
-                  # Check if logo exists
-                  if (Test-Path "installer\resources\logo.png") {
-                    # Load .NET assemblies for image processing
-                    Add-Type -AssemblyName System.Drawing
-
-                    # Create dialog banner (493 x 58 pixels - WiX standard)
-                    $logo = [System.Drawing.Image]::FromFile("$PWD\installer\resources\logo.png")
-                    $banner = New-Object System.Drawing.Bitmap 493, 58
-                    $graphics = [System.Drawing.Graphics]::FromImage($banner)
-                    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-                    $graphics.Clear([System.Drawing.Color]::White)
-
-                    # Calculate scaled size to fit
-                    $scale = [Math]::Min(493 / $logo.Width, 58 / $logo.Height)
-                    $newWidth = [int]($logo.Width * $scale)
-                    $newHeight = [int]($logo.Height * $scale)
-                    $x = (493 - $newWidth) / 2
-                    $y = (58 - $newHeight) / 2
-
-                    $graphics.DrawImage($logo, $x, $y, $newWidth, $newHeight)
-                    $banner.Save("$PWD\installer\resources\banner.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
-                    $graphics.Dispose()
-                    $banner.Dispose()
-
-                    # Create dialog background (493 x 312 pixels - WiX standard)
-                    $dialog = New-Object System.Drawing.Bitmap 493, 312
-                    $graphics = [System.Drawing.Graphics]::FromImage($dialog)
-                    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-                    $graphics.Clear([System.Drawing.Color]::White)
-
-                    # Add logo at top
-                    $scale = [Math]::Min(400 / $logo.Width, 200 / $logo.Height)
-                    $newWidth = [int]($logo.Width * $scale)
-                    $newHeight = [int]($logo.Height * $scale)
-                    $x = (493 - $newWidth) / 2
-                    $y = 50
-
-                    $graphics.DrawImage($logo, $x, $y, $newWidth, $newHeight)
-                    $dialog.Save("$PWD\installer\resources\dialog.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
-                    $graphics.Dispose()
-                    $dialog.Dispose()
-                    $logo.Dispose()
-
-                    # Also create ICO file for the executable icon (256x256)
-                    $icon = New-Object System.Drawing.Bitmap 256, 256
-                    $graphics = [System.Drawing.Graphics]::FromImage($icon)
-                    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-                    $graphics.Clear([System.Drawing.Color]::Transparent)
-
-                    # Scale logo to fit 256x256
-                    $scale = [Math]::Min(256 / $logo.Width, 256 / $logo.Height)
-                    $newWidth = [int]($logo.Width * $scale)
-                    $newHeight = [int]($logo.Height * $scale)
-                    $x = (256 - $newWidth) / 2
-                    $y = (256 - $newHeight) / 2
-
-                    $graphics.DrawImage($logo, $x, $y, $newWidth, $newHeight)
-
-                    # Save as PNG first (ICO conversion requires external tool or complex code)
-                    $icon.Save("$PWD\installer\resources\icon.png", [System.Drawing.Imaging.ImageFormat]::Png)
-                    $graphics.Dispose()
-                    $icon.Dispose()
-
-                    Write-Host "✅ Logo converted to BMP format for WiX and PNG for icon"
-                  } else {
-                    Write-Host "⚠️ Logo not found, skipping BMP conversion"
-                  }
-              shell: pwsh
-
-            - name: Create ICO file from PNG
-              run: |
-                  # Install ImageMagick for PNG to ICO conversion
-                  choco install imagemagick -y --no-progress
-
-                  # Convert PNG to ICO with multiple sizes (16, 32, 48, 256)
-                  if exist "installer\resources\icon.png" (
-                    magick "installer\resources\icon.png" -resize 256x256 -define icon:auto-resize="256,48,32,16" "installer\resources\app.ico"
-                    if %ERRORLEVEL% EQU 0 (
-                      echo ✅ ICO file created successfully
-                    ) else (
-                      echo ⚠️ ICO conversion failed, continuing without icon
-                    )
-                  )
-              shell: cmd
-
             - name: Create WiX configuration
               run: |
                   $wixContent = @'
@@ -211,7 +148,7 @@ jobs:
                       <MajorUpgrade DowngradeErrorMessage="A newer version is already installed."
                                     AllowSameVersionUpgrades="yes" />
                       <MediaTemplate EmbedCab="yes" />
-                      
+
                       <!-- Add application icon -->
                       <Icon Id="AppIcon" SourceFile="installer\resources\app.ico" />
                       <Property Id="ARPPRODUCTICON" Value="AppIcon" />
@@ -232,10 +169,6 @@ jobs:
                       <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
                         <Component Id="MainExecutable" Guid="11111111-1111-1111-1111-111111111111">
                           <File Id="DirectPrintServerEXE" Source="installer\bin\DirectPrintServer.exe" KeyPath="yes" />
-                        </Component>
-
-                        <Component Id="AppIcon" Guid="55555555-5555-5555-5555-555555555555" Directory="INSTALLFOLDER">
-                          <File Id="AppIconFile" Source="installer\resources\app.ico" />
                         </Component>
 
                         <Component Id="StartMenuShortcut" Guid="66666666-6666-6666-6666-666666666666" Directory="ApplicationProgramsFolder">
@@ -273,9 +206,8 @@ jobs:
                       <UIRef Id="WixUI_InstallDir" />
                       <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
 
-                      <!-- Add custom branding images -->
+                      <!-- Add custom banner image (493 x 58 pixels) -->
                       <WixVariable Id="WixUIBannerBmp" Value="installer\resources\banner.bmp" />
-                      <WixVariable Id="WixUIDialogBmp" Value="installer\resources\dialog.bmp" />
 
                       <!-- Custom UI messages -->
                       <UI>
