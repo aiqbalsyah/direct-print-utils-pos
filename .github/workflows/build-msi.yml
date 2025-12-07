@@ -240,12 +240,23 @@ jobs:
                       <WixVariable Id="WixUIBannerBmp" Value="installer\resources\banner.bmp" />
 
                       <!-- Custom Actions for Install/Uninstall Scripts -->
+                      <!-- Set custom action data to pass INSTALLFOLDER to deferred action -->
+                      <CustomAction Id="SetPostInstallData"
+                                    Property="RunPostInstall"
+                                    Value="INSTALLFOLDER=[INSTALLFOLDER]"
+                                    Execute="immediate" />
+
                       <CustomAction Id="RunPostInstall"
                                     FileKey="PostInstallBat"
                                     ExeCommand=""
                                     Execute="deferred"
                                     Impersonate="no"
                                     Return="ignore" />
+
+                      <CustomAction Id="SetPreUninstallData"
+                                    Property="RunPreUninstall"
+                                    Value="INSTALLFOLDER=[INSTALLFOLDER]"
+                                    Execute="immediate" />
 
                       <CustomAction Id="RunPreUninstall"
                                     FileKey="PreUninstallBat"
@@ -267,8 +278,14 @@ jobs:
                       <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
 
                       <InstallExecuteSequence>
+                        <!-- Set data for post-install script (must run before deferred action) -->
+                        <Custom Action="SetPostInstallData" Before="RunPostInstall">NOT Installed AND NOT REMOVE</Custom>
+
                         <!-- Run post-install script after files are installed (start service) -->
                         <Custom Action="RunPostInstall" After="InstallFiles">NOT Installed AND NOT REMOVE</Custom>
+
+                        <!-- Set data for pre-uninstall script (must run before deferred action) -->
+                        <Custom Action="SetPreUninstallData" Before="RunPreUninstall">REMOVE~="ALL"</Custom>
 
                         <!-- Run pre-uninstall script before RemoveFiles during uninstall -->
                         <Custom Action="RunPreUninstall" Before="RemoveFiles">REMOVE~="ALL"</Custom>
