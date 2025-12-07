@@ -18,10 +18,15 @@ jobs:
     build-msi:
         runs-on: windows-latest
         name: Build Windows MSI Installer
+        permissions:
+            contents: write  # Required for creating tags and releases
 
         steps:
             - name: Checkout code
               uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0  # Fetch all history for tagging
+                  persist-credentials: true
 
             - name: Setup Node.js 20
               uses: actions/setup-node@v4

@@ -18,10 +18,15 @@ jobs:
     build-deb:
         runs-on: ubuntu-latest
         name: Build Linux DEB Package
+        permissions:
+            contents: write  # Required for creating tags and releases
 
         steps:
             - name: Checkout code
               uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0  # Fetch all history for tagging
+                  persist-credentials: true
 
             - name: Setup Node.js 20
               uses: actions/setup-node@v4
