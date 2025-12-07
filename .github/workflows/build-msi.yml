@@ -370,7 +370,12 @@ jobs:
             - name: Create release package
               run: |
                   mkdir release
-                  copy DirectPrintServer.msi release\
+
+                  REM Create filename with version
+                  set VERSION=${{ inputs.version }}
+                  if "%VERSION%"=="" set VERSION=latest
+
+                  copy DirectPrintServer.msi "release\Direct-Print-Server-v%VERSION%-windows.msi"
 
                   echo "Copying organized scripts..."
                   xcopy /E /I /Y installer\scripts release\scripts\
@@ -412,11 +417,18 @@ jobs:
             - name: Create and push git tag
               if: ${{ inputs.create_release == true && inputs.version != '' }}
               run: |
-                  echo "Creating git tag v${{ inputs.version }}"
-                  git config user.name "github-actions[bot]"
-                  git config user.email "github-actions[bot]@users.noreply.github.com"
-                  git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
-                  git push origin "v${{ inputs.version }}"
+                  echo "Checking if tag v${{ inputs.version }} exists..."
+
+                  if git rev-parse "v${{ inputs.version }}" >/dev/null 2>&1; then
+                      echo "✅ Tag v${{ inputs.version }} already exists, skipping tag creation"
+                  else
+                      echo "Creating git tag v${{ inputs.version }}"
+                      git config user.name "github-actions[bot]"
+                      git config user.email "github-actions[bot]@users.noreply.github.com"
+                      git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
+                      git push origin "v${{ inputs.version }}"
+                      echo "✅ Tag v${{ inputs.version }} created and pushed"
+                  fi
               shell: bash
 
             - name: Create Release
@@ -424,7 +436,7 @@ jobs:
               uses: softprops/action-gh-release@v1
               with:
                   files: |
-                      DirectPrintServer.msi
+                      release/Direct-Print-Server-v${{ inputs.version }}-windows.msi
                       release/scripts/**/*
                   name: Direct Print Server v${{ inputs.version }}
                   tag_name: v${{ inputs.version }}
@@ -449,7 +461,7 @@ jobs:
 
                       **⚠️ IMPORTANT: Administrator Privileges Required!**
 
-                      1. Download `DirectPrintServer.msi`
+                      1. Download `Direct-Print-Server-v${{ inputs.version }}-windows.msi`
                       2. **RIGHT-CLICK** on the MSI file
                       3. Select **"Run as administrator"**
                       4. Click **"Yes"** on UAC prompt
@@ -462,7 +474,7 @@ jobs:
 
                       ### 🔧 Uninstallation:
                       - Use Windows "Add or Remove Programs"
-                      - Or run: `msiexec /uninstall DirectPrintServer.msi`
+                      - Or run: `msiexec /uninstall Direct-Print-Server-v${{ inputs.version }}-windows.msi`
 
                       ### 💡 Perfect for enterprise deployment!
                       This MSI installer provides professional Windows integration with

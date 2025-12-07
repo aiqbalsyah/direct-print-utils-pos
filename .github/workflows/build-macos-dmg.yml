@@ -65,7 +65,6 @@ jobs:
                   # Create app structure
                   mkdir -p "DirectPrintServer.app/Contents/MacOS"
                   mkdir -p "DirectPrintServer.app/Contents/Resources"
-                  mkdir -p "DirectPrintServer.app/Contents/Library/LaunchAgents"
 
                   echo "✅ App bundle structure created"
 
@@ -73,8 +72,92 @@ jobs:
               run: |
                   echo "Copying executable..."
 
-                  # Copy executable
-                  cp dist/direct-print-macos "DirectPrintServer.app/Contents/MacOS/DirectPrintServer"
+                  # Copy the actual server binary
+                  cp dist/direct-print-macos "DirectPrintServer.app/Contents/MacOS/direct-print-server-bin"
+                  chmod +x "DirectPrintServer.app/Contents/MacOS/direct-print-server-bin"
+
+                  # Create wrapper script that handles LaunchAgent installation
+                  cat > "DirectPrintServer.app/Contents/MacOS/DirectPrintServer" << 'WRAPPER_EOF'
+#!/bin/bash
+
+# DirectPrintServer Auto-Install Wrapper
+# This script automatically sets up LaunchAgent on first run
+
+APP_PATH="/Applications/DirectPrintServer.app"
+LAUNCH_AGENT_DIR="$HOME/Library/LaunchAgents"
+LAUNCH_AGENT_PLIST="$LAUNCH_AGENT_DIR/com.aiqbalsyah.directprintserver.plist"
+LABEL="com.aiqbalsyah.directprintserver"
+
+# Check if we're running from /Applications
+CURRENT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# Function to install LaunchAgent
+install_launch_agent() {
+    mkdir -p "$LAUNCH_AGENT_DIR"
+
+    cat > "$LAUNCH_AGENT_PLIST" << 'PLIST_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aiqbalsyah.directprintserver</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/DirectPrintServer.app/Contents/MacOS/direct-print-server-bin</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/direct-print-server.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/direct-print-server-error.log</string>
+</dict>
+</plist>
+PLIST_EOF
+
+    # Load the LaunchAgent
+    launchctl unload "$LAUNCH_AGENT_PLIST" 2>/dev/null || true
+    launchctl load "$LAUNCH_AGENT_PLIST"
+    launchctl start "$LABEL"
+}
+
+# If app is in /Applications and LaunchAgent not installed, install it
+if [[ "$CURRENT_PATH" == "$APP_PATH" ]]; then
+    if [[ ! -f "$LAUNCH_AGENT_PLIST" ]]; then
+        echo "First run detected. Installing LaunchAgent for auto-startup..."
+        install_launch_agent
+
+        # Open browser after installation
+        sleep 2
+        open "http://localhost:4000/index.html" 2>/dev/null || true
+
+        # Show notification
+        osascript -e 'display notification "Direct Print Server is now running at http://localhost:4000" with title "Direct Print Server Started"' 2>/dev/null || true
+
+        echo "✅ Direct Print Server installed and started!"
+        echo "   Access at: http://localhost:4000"
+        exit 0
+    else
+        # LaunchAgent already exists, just ensure it's running
+        if ! launchctl list | grep -q "$LABEL"; then
+            launchctl start "$LABEL" 2>/dev/null || true
+        fi
+
+        # Open browser
+        open "http://localhost:4000/index.html" 2>/dev/null || true
+        exit 0
+    fi
+else
+    # Running from DMG or other location - just start the server directly
+    echo "Running from: $CURRENT_PATH"
+    echo "For auto-startup, please move to /Applications first"
+    exec "$CURRENT_PATH/Contents/MacOS/direct-print-server-bin"
+fi
+WRAPPER_EOF
+
                   chmod +x "DirectPrintServer.app/Contents/MacOS/DirectPrintServer"
 
                   # Copy public assets
@@ -82,7 +165,7 @@ jobs:
                     cp -r public "DirectPrintServer.app/Contents/Resources/"
                   fi
 
-                  echo "✅ Executable copied"
+                  echo "✅ Executable and wrapper created"
 
             - name: Create Info.plist
               run: |
@@ -125,184 +208,76 @@ jobs:
 
                   echo "✅ Info.plist created"
 
-            - name: Create LaunchAgent plist
-              run: |
-                  cat > "DirectPrintServer.app/Contents/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist" << 'EOF'
-                  <?xml version="1.0" encoding="UTF-8"?>
-                  <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-                  <plist version="1.0">
-                  <dict>
-                      <key>Label</key>
-                      <string>com.aiqbalsyah.directprintserver</string>
-                      <key>ProgramArguments</key>
-                      <array>
-                          <string>/Applications/DirectPrintServer.app/Contents/MacOS/DirectPrintServer</string>
-                      </array>
-                      <key>RunAtLoad</key>
-                      <true/>
-                      <key>KeepAlive</key>
-                      <true/>
-                      <key>StandardOutPath</key>
-                      <string>/tmp/direct-print-server.log</string>
-                      <key>StandardErrorPath</key>
-                      <string>/tmp/direct-print-server-error.log</string>
-                  </dict>
-                  </plist>
-                  EOF
 
-                  echo "✅ LaunchAgent plist created"
 
-            - name: Create installation script
-              run: |
-                  cat > "install.sh" << 'EOF'
-                  #!/bin/bash
-
-                  echo "=========================================="
-                  echo "  Direct Print Server - Installation"
-                  echo "=========================================="
-                  echo ""
-
-                  # Check if running as root
-                  if [ "$EUID" -ne 0 ]; then
-                      echo "⚠️  This script requires administrator privileges"
-                      echo "   Please run: sudo bash install.sh"
-                      exit 1
-                  fi
-
-                  # Copy app to Applications
-                  echo "[1/4] Copying application to /Applications..."
-                  cp -R "DirectPrintServer.app" "/Applications/"
-                  chmod +x "/Applications/DirectPrintServer.app/Contents/MacOS/DirectPrintServer"
-
-                  # Install LaunchAgent
-                  echo "[2/4] Installing LaunchAgent..."
-                  LAUNCH_AGENT_PATH="$HOME/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist"
-                  cp "DirectPrintServer.app/Contents/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist" "$LAUNCH_AGENT_PATH"
-
-                  # Set permissions
-                  echo "[3/4] Setting permissions..."
-                  chown root:wheel "/Applications/DirectPrintServer.app"
-                  chmod 755 "/Applications/DirectPrintServer.app"
-
-                  # Load LaunchAgent
-                  echo "[4/4] Starting service..."
-                  launchctl load "$LAUNCH_AGENT_PATH"
-                  launchctl start com.aiqbalsyah.directprintserver
-
-                  # Wait for service to start
-                  sleep 3
-
-                  # Open browser to verify installation
-                  open http://localhost:4000/index.html &
-
-                  echo ""
-                  echo "✅ Installation completed successfully!"
-                  echo ""
-                  echo "Opening browser to verify installation..."
-                  echo "Service is now running at: http://localhost:4000"
-                  echo ""
-                  echo "Useful commands:"
-                  echo "  - Check status: launchctl list | grep directprintserver"
-                  echo "  - View logs: tail -f /tmp/direct-print-server.log"
-                  echo "  - Stop service: launchctl stop com.aiqbalsyah.directprintserver"
-                  echo "  - Restart: launchctl stop com.aiqbalsyah.directprintserver && launchctl start com.aiqbalsyah.directprintserver"
-                  echo ""
-                  EOF
-
-                  chmod +x install.sh
-                  echo "✅ Installation script created"
-
-            - name: Create uninstallation script
-              run: |
-                  cat > "uninstall.sh" << 'EOF'
-                  #!/bin/bash
-
-                  echo "=========================================="
-                  echo "  Direct Print Server - Uninstallation"
-                  echo "=========================================="
-                  echo ""
-
-                  # Check if running as root
-                  if [ "$EUID" -ne 0 ]; then
-                      echo "⚠️  This script requires administrator privileges"
-                      echo "   Please run: sudo bash uninstall.sh"
-                      exit 1
-                  fi
-
-                  # Stop and unload LaunchAgent
-                  echo "[1/3] Stopping service..."
-                  LAUNCH_AGENT_PATH="$HOME/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist"
-                  launchctl stop com.aiqbalsyah.directprintserver
-                  launchctl unload "$LAUNCH_AGENT_PATH"
-                  rm -f "$LAUNCH_AGENT_PATH"
-
-                  # Remove application
-                  echo "[2/3] Removing application..."
-                  rm -rf "/Applications/DirectPrintServer.app"
-
-                  # Clean up logs
-                  echo "[3/3] Cleaning up..."
-                  rm -f /tmp/direct-print-server.log
-                  rm -f /tmp/direct-print-server-error.log
-
-                  echo ""
-                  echo "✅ Uninstallation completed successfully!"
-                  echo ""
-                  EOF
-
-                  chmod +x uninstall.sh
-                  echo "✅ Uninstallation script created"
 
             - name: Create README
               run: |
                   cat > "README.txt" << 'EOF'
-                  Direct Print Server for macOS
-                  ==============================
+                  ╔══════════════════════════════════════════════╗
+                  ║   Direct Print Server for macOS - v1.0.0    ║
+                  ╚══════════════════════════════════════════════╝
 
-                  Version: 1.0.0
+                  📦 SUPER EASY INSTALLATION
+                  ══════════════════════════
+                  1. Drag "DirectPrintServer.app" to Applications folder
+                  2. Double-click to open
+                  3. Done! ✅
 
-                  INSTALLATION
-                  ------------
-                  1. Open the DMG file
-                  2. Run: sudo bash install.sh
-                  3. Service will start automatically
+                  The app will automatically:
+                  • Install LaunchAgent for auto-startup
+                  • Start the print server
+                  • Open browser to http://localhost:4000
+                  • Show a notification when ready
 
-                  VERIFY INSTALLATION
-                  -------------------
-                  1. Check service:
-                     launchctl list | grep directprintserver
+                  🔐 FIRST RUN - SECURITY NOTICE
+                  ════════════════════════════════
+                  If you see "DirectPrintServer is damaged":
 
-                  2. Open web interface:
-                     open http://localhost:4000
+                  Option 1 (Terminal):
+                    xattr -cr /Applications/DirectPrintServer.app
+                    open /Applications/DirectPrintServer.app
 
-                  3. View logs:
-                     tail -f /tmp/direct-print-server.log
+                  Option 2 (System Preferences):
+                    System Preferences → Security & Privacy → Click "Open Anyway"
 
-                  MANUAL INSTALLATION
-                  -------------------
-                  1. Copy DirectPrintServer.app to /Applications/
-                  2. Copy LaunchAgent plist to ~/Library/LaunchAgents/
-                  3. Load with: launchctl load ~/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist
+                  This is normal for unsigned apps. The app is NOT damaged.
 
-                  UNINSTALLATION
-                  --------------
-                  Run: sudo bash uninstall.sh
+                  ✅ VERIFY INSTALLATION
+                  ════════════════════════
+                  • Check service: launchctl list | grep directprintserver
+                  • Open browser: http://localhost:4000
+                  • View logs: tail -f /tmp/direct-print-server.log
 
-                  REQUIREMENTS
-                  ------------
-                  - macOS 10.13 (High Sierra) or later
-                  - CUPS printing system (pre-installed on macOS)
-                  - Printer configured in System Preferences
+                  🗑️  UNINSTALLATION
+                  ════════════════════
+                  1. Stop service:
+                     launchctl stop com.aiqbalsyah.directprintserver
+                     launchctl unload ~/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist
 
-                  TROUBLESHOOTING
-                  ---------------
-                  If service won't start:
-                  1. Check logs: cat /tmp/direct-print-server-error.log
-                  2. Verify port: lsof -i:4000
-                  3. Check printers: lpstat -p -d
+                  2. Delete files:
+                     rm ~/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist
+                     rm -rf /Applications/DirectPrintServer.app
+                     rm /tmp/direct-print-server*.log
 
-                  SUPPORT
-                  -------
+                  📋 REQUIREMENTS
+                  ═════════════════
+                  • macOS 10.13 (High Sierra) or later
+                  • CUPS (pre-installed on macOS)
+                  • Printer configured in System Preferences
+
+                  🔧 TROUBLESHOOTING
+                  ════════════════════
+                  Service won't start?
+                  → Check logs: cat /tmp/direct-print-server-error.log
+                  → Check port: lsof -i:4000
+                  → Check printers: lpstat -p -d
+
+                  Browser doesn't open?
+                  → Manually visit: http://localhost:4000
+
+                  💬 SUPPORT
+                  ════════════
                   GitHub: https://github.com/aiqbalsyah/direct-print-utils-pos
                   Issues: https://github.com/aiqbalsyah/direct-print-utils-pos/issues
                   EOF
@@ -313,26 +288,32 @@ jobs:
               run: |
                   echo "Creating DMG package..."
 
+                  # Remove quarantine attributes from app (prevents Gatekeeper "damaged" error)
+                  echo "Removing quarantine attributes..."
+                  xattr -cr DirectPrintServer.app || true
+
                   # Create temporary directory for DMG contents
                   mkdir -p dmg-contents
                   cp -R DirectPrintServer.app dmg-contents/
-                  cp install.sh dmg-contents/
-                  cp uninstall.sh dmg-contents/
                   cp README.txt dmg-contents/
 
-                  # Create symlink to Applications folder
+                  # Remove quarantine from all DMG contents
+                  xattr -cr dmg-contents/* || true
+
+                  # Create symlink to Applications folder for drag-and-drop
                   ln -s /Applications dmg-contents/Applications
 
-                  # Create DMG
+                  # Create DMG with drag-and-drop layout
                   create-dmg \
                     --volname "Direct Print Server" \
                     --volicon "DirectPrintServer.app/Contents/Resources/AppIcon.icns" \
                     --window-pos 200 120 \
-                    --window-size 800 400 \
-                    --icon-size 100 \
-                    --icon "DirectPrintServer.app" 200 190 \
+                    --window-size 660 400 \
+                    --icon-size 128 \
+                    --icon "DirectPrintServer.app" 180 170 \
+                    --icon "README.txt" 180 300 \
                     --hide-extension "DirectPrintServer.app" \
-                    --app-drop-link 600 185 \
+                    --app-drop-link 480 170 \
                     --no-internet-enable \
                     "DirectPrintServer-1.0.0.dmg" \
                     "dmg-contents/" || true
@@ -366,56 +347,68 @@ jobs:
             - name: Create release package
               run: |
                   mkdir -p release
-                  cp DirectPrintServer-1.0.0.dmg release/
+
+                  # Create filename with version
+                  VERSION="${{ inputs.version }}"
+                  if [ -z "$VERSION" ]; then
+                      VERSION="latest"
+                  fi
+
+                  cp DirectPrintServer-1.0.0.dmg "release/Direct-Print-Server-v${VERSION}-macos.dmg"
 
                   # Create installation guide
                   cat > release/INSTALL.txt << 'EOF'
-                  ====================================================
-                    Direct Print Server - macOS DMG Package
-                  ====================================================
+                  ╔═══════════════════════════════════════════════════╗
+                  ║  Direct Print Server - macOS Drag-and-Drop Install  ║
+                  ╚═══════════════════════════════════════════════════╝
 
-                  QUICK INSTALLATION
-                  ------------------
-                  1. Open DirectPrintServer-1.0.0.dmg
-                  2. Run: sudo bash install.sh
-                  3. Service starts automatically
-                  4. Access: http://localhost:4000
-
-                  MANUAL INSTALLATION
-                  -------------------
-                  1. Open DirectPrintServer-1.0.0.dmg
+                  📦 INSTALLATION (3 STEPS)
+                  ═════════════════════════════
+                  1. Open the DMG file
                   2. Drag "DirectPrintServer.app" to Applications folder
-                  3. Copy LaunchAgent plist:
-                     cp DirectPrintServer.app/Contents/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist \
-                        ~/Library/LaunchAgents/
+                  3. Double-click DirectPrintServer.app
 
-                  4. Load and start:
-                     launchctl load ~/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist
-                     launchctl start com.aiqbalsyah.directprintserver
+                  ✨ That's it! The app will:
+                  • Auto-install LaunchAgent for startup
+                  • Start the server
+                  • Open browser to http://localhost:4000
+                  • Show macOS notification when ready
 
-                  VERIFY
-                  ------
+                  🔐 GATEKEEPER WARNING?
+                  ═══════════════════════
+                  If you see "DirectPrintServer is damaged":
+
+                  Terminal fix:
+                    xattr -cr /Applications/DirectPrintServer.app
+                    open /Applications/DirectPrintServer.app
+
+                  OR
+
+                  System Preferences:
+                    Security & Privacy → "Open Anyway"
+
+                  This is normal for unsigned apps.
+
+                  ✅ VERIFY
+                  ══════════
                   launchctl list | grep directprintserver
                   open http://localhost:4000
 
-                  UNINSTALL
-                  ---------
-                  Run: sudo bash uninstall.sh
+                  🗑️  UNINSTALL
+                  ═══════════════
+                  launchctl stop com.aiqbalsyah.directprintserver
+                  launchctl unload ~/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist
+                  rm ~/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist
+                  rm -rf /Applications/DirectPrintServer.app
 
-                  Or manually:
-                  1. launchctl stop com.aiqbalsyah.directprintserver
-                  2. launchctl unload ~/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist
-                  3. rm ~/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist
-                  4. rm -rf /Applications/DirectPrintServer.app
+                  📋 REQUIREMENTS
+                  ════════════════
+                  • macOS 10.13+ (High Sierra or later)
+                  • CUPS (pre-installed on macOS)
+                  • Printer in System Preferences
 
-                  REQUIREMENTS
-                  ------------
-                  - macOS 10.13 (High Sierra) or later
-                  - CUPS (pre-installed)
-                  - Administrator privileges for installation
-
-                  SUPPORT
-                  -------
+                  💬 SUPPORT
+                  ═══════════
                   GitHub: https://github.com/aiqbalsyah/direct-print-utils-pos
                   EOF
 
@@ -431,18 +424,25 @@ jobs:
             - name: Create and push git tag
               if: ${{ inputs.create_release == true && inputs.version != '' }}
               run: |
-                  echo "Creating git tag v${{ inputs.version }}"
-                  git config user.name "github-actions[bot]"
-                  git config user.email "github-actions[bot]@users.noreply.github.com"
-                  git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
-                  git push origin "v${{ inputs.version }}"
+                  echo "Checking if tag v${{ inputs.version }} exists..."
+
+                  if git rev-parse "v${{ inputs.version }}" >/dev/null 2>&1; then
+                      echo "✅ Tag v${{ inputs.version }} already exists, skipping tag creation"
+                  else
+                      echo "Creating git tag v${{ inputs.version }}"
+                      git config user.name "github-actions[bot]"
+                      git config user.email "github-actions[bot]@users.noreply.github.com"
+                      git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
+                      git push origin "v${{ inputs.version }}"
+                      echo "✅ Tag v${{ inputs.version }} created and pushed"
+                  fi
 
             - name: Create Release
               if: ${{ inputs.create_release == true && inputs.version != '' }}
               uses: softprops/action-gh-release@v1
               with:
                   files: |
-                      release/DirectPrintServer-1.0.0.dmg
+                      release/Direct-Print-Server-v${{ inputs.version }}-macos.dmg
                       release/INSTALL.txt
                   name: Direct Print Server v${{ inputs.version }}
                   tag_name: v${{ inputs.version }}
@@ -458,24 +458,20 @@ jobs:
                       - ✅ **CUPS Support** - Works with any macOS printer
                       - ✅ **Background Service** - Runs silently in background
 
-                      ### 🚀 Quick Installation
+                      ### 🚀 Super Easy Installation (Drag-and-Drop!)
 
-                      **Option 1: Automated (Recommended)**
-                      ```bash
-                      # Download and open DMG
-                      open DirectPrintServer-1.0.0.dmg
-
-                      # Run installer
-                      sudo bash install.sh
-
-                      # Verify
-                      open http://localhost:4000
-                      ```
-
-                      **Option 2: Manual**
-                      1. Open `DirectPrintServer-1.0.0.dmg`
+                      **Just 3 Steps:**
+                      1. Open `Direct-Print-Server-v${{ inputs.version }}-macos.dmg`
                       2. Drag `DirectPrintServer.app` to Applications folder
-                      3. Follow instructions in README.txt
+                      3. Double-click to open
+
+                      **The app automatically:**
+                      - Installs LaunchAgent for auto-startup
+                      - Starts the print server
+                      - Opens browser to http://localhost:4000
+                      - Shows notification when ready
+
+                      **No install.sh needed! No sudo required!**
 
                       ### 💻 Supported macOS Versions
 
@@ -490,10 +486,9 @@ jobs:
 
                       ### 🎯 Package Contents
 
-                      - `DirectPrintServer.app` - Main application bundle
-                      - `install.sh` - Automated installation script
-                      - `uninstall.sh` - Complete removal script
-                      - `README.txt` - Detailed documentation
+                      - `DirectPrintServer.app` - Self-installing application bundle
+                      - `README.txt` - Installation and usage instructions
+                      - Drag-and-drop installer (Applications folder shortcut)
 
                       ### 🔧 Management Commands
 
@@ -509,7 +504,10 @@ jobs:
                       launchctl start com.aiqbalsyah.directprintserver
 
                       # Uninstall
-                      sudo bash uninstall.sh
+                      launchctl stop com.aiqbalsyah.directprintserver
+                      launchctl unload ~/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist
+                      rm ~/Library/LaunchAgents/com.aiqbalsyah.directprintserver.plist
+                      rm -rf /Applications/DirectPrintServer.app
                       ```
 
                       ### 📋 Requirements
@@ -517,14 +515,29 @@ jobs:
                       - macOS 10.13 or later
                       - CUPS printing system (pre-installed)
                       - Printer configured in System Preferences
-                      - Administrator privileges for installation
+                      - **No sudo required!** Runs as user-level app
 
                       ### 🔐 Security Notes
 
-                      - Service runs as user-level LaunchAgent
-                      - Requires sudo for installation only
+                      - Service runs as user-level LaunchAgent (no root access)
+                      - **No administrator privileges needed**
                       - All data stays local (no internet required)
                       - Open source - verify code before installing
+                      - Self-installing on first run
+
+                      ### ⚠️ Gatekeeper "Damaged App" Warning?
+
+                      If you see "DirectPrintServer is damaged and can't be opened":
+
+                      **Quick Fix:**
+                      ```bash
+                      xattr -cr /Applications/DirectPrintServer.app
+                      open /Applications/DirectPrintServer.app
+                      ```
+
+                      **Or:** System Preferences → Security & Privacy → Click "Open Anyway"
+
+                      This is normal for unsigned apps. The app is NOT damaged - it's a macOS security feature.
 
                       Perfect for macOS servers and desktop deployments!
                   draft: false

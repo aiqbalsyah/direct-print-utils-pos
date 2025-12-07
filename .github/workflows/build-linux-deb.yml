@@ -53,6 +53,10 @@ jobs:
                   ls -lh ./dist/direct-print-linux
                   file ./dist/direct-print-linux
 
+                  # Remove extended attributes if any (similar to macOS xattr)
+                  echo "Removing extended attributes..."
+                  setfattr -h -x user.pax.flags ./dist/direct-print-linux 2>/dev/null || true
+
             - name: Install DEB packaging tools
               run: |
                   echo "Installing dpkg-deb and fakeroot..."
@@ -159,6 +163,18 @@ jobs:
                   set -e
 
                   echo "Setting up Direct Print Server..."
+
+                  # Ensure executable has correct permissions
+                  chmod +x /usr/local/bin/direct-print-server
+
+                  # Remove extended attributes if any
+                  setfattr -h -x user.pax.flags /usr/local/bin/direct-print-server 2>/dev/null || true
+
+                  # Fix SELinux context if SELinux is enabled
+                  if command -v restorecon > /dev/null && getenforce 2>/dev/null | grep -q "Enforcing"; then
+                      echo "Setting SELinux context..."
+                      restorecon -v /usr/local/bin/direct-print-server || true
+                  fi
 
                   # Reload systemd
                   systemctl daemon-reload
@@ -311,7 +327,14 @@ jobs:
             - name: Create release package
               run: |
                   mkdir -p release
-                  cp direct-print-server_1.0.0_amd64.deb release/
+
+                  # Create filename with version
+                  VERSION="${{ inputs.version }}"
+                  if [ -z "$VERSION" ]; then
+                      VERSION="latest"
+                  fi
+
+                  cp direct-print-server_1.0.0_amd64.deb "release/Direct-Print-Server-v${VERSION}-linux-amd64.deb"
 
                   # Create installation guide
                   cat > release/INSTALL.txt << 'EOF'
@@ -348,6 +371,16 @@ jobs:
 
                   TROUBLESHOOTING
                   ---------------
+                  Permission denied error:
+                  1. Check executable permissions: ls -l /usr/local/bin/direct-print-server
+                  2. Fix permissions: sudo chmod +x /usr/local/bin/direct-print-server
+                  3. Restart service: sudo systemctl restart direct-print-server
+
+                  SELinux issues (Fedora/RHEL/CentOS):
+                  1. Check SELinux status: getenforce
+                  2. Fix context: sudo restorecon -v /usr/local/bin/direct-print-server
+                  3. Or temporarily disable: sudo setenforce 0
+
                   If service won't start:
                   1. Check logs: journalctl -u direct-print-server -xe
                   2. Verify port 4000 is available: lsof -i:4000
@@ -371,18 +404,25 @@ jobs:
             - name: Create and push git tag
               if: ${{ inputs.create_release == true && inputs.version != '' }}
               run: |
-                  echo "Creating git tag v${{ inputs.version }}"
-                  git config user.name "github-actions[bot]"
-                  git config user.email "github-actions[bot]@users.noreply.github.com"
-                  git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
-                  git push origin "v${{ inputs.version }}"
+                  echo "Checking if tag v${{ inputs.version }} exists..."
+
+                  if git rev-parse "v${{ inputs.version }}" >/dev/null 2>&1; then
+                      echo "✅ Tag v${{ inputs.version }} already exists, skipping tag creation"
+                  else
+                      echo "Creating git tag v${{ inputs.version }}"
+                      git config user.name "github-actions[bot]"
+                      git config user.email "github-actions[bot]@users.noreply.github.com"
+                      git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
+                      git push origin "v${{ inputs.version }}"
+                      echo "✅ Tag v${{ inputs.version }} created and pushed"
+                  fi
 
             - name: Create Release
               if: ${{ inputs.create_release == true && inputs.version != '' }}
               uses: softprops/action-gh-release@v1
               with:
                   files: |
-                      release/direct-print-server_1.0.0_amd64.deb
+                      release/Direct-Print-Server-v${{ inputs.version }}-linux-amd64.deb
                       release/INSTALL.txt
                   name: Direct Print Server v${{ inputs.version }}
                   tag_name: v${{ inputs.version }}
@@ -402,10 +442,10 @@ jobs:
 
                       ```bash
                       # Download the DEB package
-                      wget https://github.com/aiqbalsyah/direct-print-utils-pos/releases/download/v${{ github.ref_name }}/direct-print-server_1.0.0_amd64.deb
+                      wget https://github.com/aiqbalsyah/direct-print-utils-pos/releases/download/v${{ inputs.version }}/Direct-Print-Server-v${{ inputs.version }}-linux-amd64.deb
 
                       # Install
-                      sudo dpkg -i direct-print-server_1.0.0_amd64.deb
+                      sudo dpkg -i Direct-Print-Server-v${{ inputs.version }}-linux-amd64.deb
 
                       # Verify
                       systemctl status direct-print-server
@@ -453,6 +493,23 @@ jobs:
                       - CUPS printing system (usually pre-installed)
                       - Printer configured in system settings
                       - Port 4000 available
+
+                      ### ⚠️ Troubleshooting
+
+                      **Permission Denied Error:**
+                      ```bash
+                      sudo chmod +x /usr/local/bin/direct-print-server
+                      sudo systemctl restart direct-print-server
+                      ```
+
+                      **SELinux Issues (Fedora/RHEL/CentOS):**
+                      ```bash
+                      # Fix SELinux context
+                      sudo restorecon -v /usr/local/bin/direct-print-server
+                      sudo systemctl restart direct-print-server
+                      ```
+
+                      The postinst script handles these automatically, but manual fix available if needed.
 
                       Perfect for Linux servers and desktop deployments!
                   draft: false

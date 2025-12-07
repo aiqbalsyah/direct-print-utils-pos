@@ -71,7 +71,12 @@ jobs:
               run: |
                   echo "Creating release package..."
                   mkdir release
-                  copy "dist\direct-print-win.exe" "release\DirectPrintServer.exe"
+
+                  REM Create filename with version
+                  set VERSION=${{ inputs.version }}
+                  if "%VERSION%"=="" set VERSION=latest
+
+                  copy "dist\direct-print-win.exe" "release\Direct-Print-Server-v%VERSION%-windows.exe"
 
                   echo "Copying scripts..."
                   if exist "scripts" (
@@ -106,11 +111,18 @@ jobs:
             - name: Create and push git tag
               if: ${{ inputs.create_release == true && inputs.version != '' }}
               run: |
-                  echo "Creating git tag v${{ inputs.version }}"
-                  git config user.name "github-actions[bot]"
-                  git config user.email "github-actions[bot]@users.noreply.github.com"
-                  git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
-                  git push origin "v${{ inputs.version }}"
+                  echo "Checking if tag v${{ inputs.version }} exists..."
+
+                  if git rev-parse "v${{ inputs.version }}" >/dev/null 2>&1; then
+                      echo "✅ Tag v${{ inputs.version }} already exists, skipping tag creation"
+                  else
+                      echo "Creating git tag v${{ inputs.version }}"
+                      git config user.name "github-actions[bot]"
+                      git config user.email "github-actions[bot]@users.noreply.github.com"
+                      git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
+                      git push origin "v${{ inputs.version }}"
+                      echo "✅ Tag v${{ inputs.version }} created and pushed"
+                  fi
               shell: bash
 
             - name: Create Release
@@ -118,7 +130,7 @@ jobs:
               uses: softprops/action-gh-release@v1
               with:
                   files: |
-                      release/DirectPrintServer.exe
+                      release/Direct-Print-Server-v${{ inputs.version }}-windows.exe
                       release/scripts/**/*
                   name: Direct Print Server v${{ inputs.version }}
                   tag_name: v${{ inputs.version }}
@@ -126,7 +138,7 @@ jobs:
                       ## 🖨️ Direct Print Server - Windows Executable
 
                       ### 🚀 Quick Start:
-                      1. Download `DirectPrintServer.exe`
+                      1. Download `Direct-Print-Server-v${{ inputs.version }}-windows.exe`
                       2. Double-click to run
                       3. Server starts at `http://localhost:4000`
                       4. Use Ctrl+C to stop
