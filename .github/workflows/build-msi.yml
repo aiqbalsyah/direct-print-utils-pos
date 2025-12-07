@@ -273,16 +273,14 @@ jobs:
                                     Impersonate="yes"
                                     Return="asyncNoWait" />
 
-                      <!-- Property to launch browser -->
-                      <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open Direct Print Server in browser" />
-                      <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+                      <!-- Property to launch browser - disabled for manual startup -->
+                      <!-- <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open Direct Print Server in browser" /> -->
+                      <!-- <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" /> -->
 
                       <InstallExecuteSequence>
-                        <!-- Set data for post-install script (immediate, stores data for commit action) -->
-                        <Custom Action="SetPostInstallData" After="InstallFiles">NOT Installed AND NOT REMOVE</Custom>
-
-                        <!-- Run post-install script (commit, must run before InstallFinalize) -->
-                        <Custom Action="RunPostInstall" Before="InstallFinalize">NOT Installed AND NOT REMOVE</Custom>
+                        <!-- Post-install script disabled - manual startup preferred -->
+                        <!-- <Custom Action="SetPostInstallData" After="InstallFiles">NOT Installed AND NOT REMOVE</Custom> -->
+                        <!-- <Custom Action="RunPostInstall" Before="InstallFinalize">NOT Installed AND NOT REMOVE</Custom> -->
 
                         <!-- Set data for pre-uninstall script (must run before deferred action) -->
                         <Custom Action="SetPreUninstallData" Before="RunPreUninstall">REMOVE~="ALL"</Custom>
@@ -290,11 +288,10 @@ jobs:
                         <!-- Run pre-uninstall script before RemoveFiles during uninstall -->
                         <Custom Action="RunPreUninstall" Before="RemoveFiles">REMOVE~="ALL"</Custom>
 
-                        <!-- Open browser after successful installation (only on fresh install, not upgrade) -->
-                        <!-- Delay 3 seconds to let service start -->
-                        <Custom Action="OpenBrowserAction" After="InstallFinalize">
+                        <!-- Browser auto-open disabled - manual startup preferred -->
+                        <!-- <Custom Action="OpenBrowserAction" After="InstallFinalize">
                           NOT Installed AND NOT REMOVE AND WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1
-                        </Custom>
+                        </Custom> -->
                       </InstallExecuteSequence>
 
                       <!-- Check for admin privileges and show friendly error -->

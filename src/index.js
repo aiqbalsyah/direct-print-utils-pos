@@ -665,17 +665,31 @@ function printSend(cmds, callback, jobId = null) {
             updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Sending RAW data to thermal printer...', 75);
           }
 
-          // Optimized: Use compact PowerShell with pre-loaded type
-          // This avoids slow Add-Type compilation on every print job
-          const printerNameEscaped = printerInfo.printer.replace(/"/g, '""');
-          const cmdsBase64 = Buffer.from(cmds, 'binary').toString('base64');
+          // Write RAW data to temp file (more reliable than inline Base64)
+          const rawTempFile = path.join(os.tmpdir(), `print_raw_${Date.now()}.bin`);
+          fs.writeFileSync(rawTempFile, cmds, 'binary');
+          console.log(`📄 Created temp file: ${rawTempFile}`);
 
-          // Compact PowerShell command that loads type once and prints
-          const psCommand = `
-$p='${printerNameEscaped}';
-$b=[Convert]::FromBase64String('${cmdsBase64}');
-if(!('RawPrint.Helper' -as [type])){
-Add-Type -TypeDefinition @'
+          // Create PowerShell script with better error handling and logging
+          const printerNameEscaped = printerInfo.printer.replace(/"/g, '""').replace(/'/g, "''");
+          const rawTempFileEscaped = rawTempFile.replace(/\\/g, '\\\\');
+
+          const psScriptFile = path.join(os.tmpdir(), `print_script_${Date.now()}.ps1`);
+          const psScript = `
+$ErrorActionPreference = "Stop"
+$printerName = "${printerNameEscaped}"
+$filePath = "${rawTempFileEscaped}"
+
+Write-Host "Printer: $printerName"
+Write-Host "File: $filePath"
+
+try {
+    $bytes = [System.IO.File]::ReadAllBytes($filePath)
+    Write-Host "Read $($bytes.Length) bytes from file"
+
+    if(!('RawPrint.Helper' -as [type])){
+        Write-Host "Loading printer helper..."
+        Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 namespace RawPrint {
@@ -702,7 +716,7 @@ namespace RawPrint {
     public static extern bool WritePrinter(IntPtr h,IntPtr b,int c,out int w);
     public static bool Print(string n,byte[] d){
       IntPtr h=IntPtr.Zero;
-      var i=new DOCINFOA{pDocName="Print",pDataType="RAW"};
+      var i=new DOCINFOA{pDocName="Thermal Receipt",pDataType="RAW"};
       if(OpenPrinter(n,out h,IntPtr.Zero)){
         if(StartDocPrinter(h,1,i)){
           if(StartPagePrinter(h)){
@@ -724,17 +738,41 @@ namespace RawPrint {
   }
 }
 '@
+    } else {
+        Write-Host "Printer helper already loaded"
+    }
+
+    Write-Host "Sending to printer..."
+    $result = [RawPrint.Helper]::Print($printerName, $bytes)
+
+    if($result) {
+        Write-Host "SUCCESS: Print job sent"
+        exit 0
+    } else {
+        Write-Error "FAILED: WritePrinter returned false"
+        exit 1
+    }
+} catch {
+    Write-Error "ERROR: $($_.Exception.Message)"
+    Write-Error $_.ScriptStackTrace
+    exit 1
 }
-if([RawPrint.Helper]::Print($p,$b)){exit 0}else{exit 1}
 `.trim();
 
-          // Execute optimized PowerShell command directly (no temp files needed)
-          exec(`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "${psCommand}"`, {
+          fs.writeFileSync(psScriptFile, psScript, 'utf8');
+          console.log(`📄 Created PowerShell script: ${psScriptFile}`);
+
+          // Execute PowerShell script file
+          exec(`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${psScriptFile}"`, {
             timeout: 10000,
-            windowsHide: true
+            windowsHide: false
           }, (printError, stdout, stderr) => {
             const elapsed = Date.now() - startTime;
             console.log(`⏱️ Print operation took ${elapsed}ms`);
+
+            // Clean up temp files
+            try { fs.unlinkSync(rawTempFile); } catch(e) {}
+            try { fs.unlinkSync(psScriptFile); } catch(e) {}
 
             if (printError) {
               console.error('❌ Windows thermal print failed:', printError.message);
