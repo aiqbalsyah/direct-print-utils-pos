@@ -281,8 +281,8 @@ jobs:
                         <!-- Set data for post-install script (immediate, stores data for commit action) -->
                         <Custom Action="SetPostInstallData" After="InstallFiles">NOT Installed AND NOT REMOVE</Custom>
 
-                        <!-- Run post-install script (commit, runs after files are written to disk) -->
-                        <Custom Action="RunPostInstall" After="InstallFinalize">NOT Installed AND NOT REMOVE</Custom>
+                        <!-- Run post-install script (commit, must run before InstallFinalize) -->
+                        <Custom Action="RunPostInstall" Before="InstallFinalize">NOT Installed AND NOT REMOVE</Custom>
 
                         <!-- Set data for pre-uninstall script (must run before deferred action) -->
                         <Custom Action="SetPreUninstallData" Before="RunPreUninstall">REMOVE~="ALL"</Custom>
