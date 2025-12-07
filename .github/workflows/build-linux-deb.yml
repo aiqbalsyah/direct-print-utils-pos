@@ -74,6 +74,7 @@ jobs:
                   mkdir -p direct-print-server_1.0.0_amd64/etc/systemd/system
                   mkdir -p direct-print-server_1.0.0_amd64/usr/share/applications
                   mkdir -p direct-print-server_1.0.0_amd64/usr/share/doc/direct-print-server
+                  mkdir -p direct-print-server_1.0.0_amd64/usr/share/pixmaps
 
                   echo "✅ DEB structure created"
 
@@ -88,6 +89,12 @@ jobs:
                   # Copy public assets
                   if [ -d "public" ]; then
                     cp -r public/* direct-print-server_1.0.0_amd64/usr/local/share/direct-print-server/
+                  fi
+
+                  # Copy app icon for Linux
+                  if [ -f "public/logo.png" ]; then
+                    cp public/logo.png direct-print-server_1.0.0_amd64/usr/share/pixmaps/direct-print-server.png
+                    echo "✅ App icon copied"
                   fi
 
                   echo "✅ Files copied"
@@ -123,7 +130,7 @@ jobs:
                   Name=Direct Print Server
                   Comment=Thermal Printer Service for POS Systems
                   Exec=xdg-open http://localhost:4000
-                  Icon=printer
+                  Icon=direct-print-server
                   Terminal=false
                   Categories=Office;Printing;
                   Keywords=printer;thermal;pos;receipt;

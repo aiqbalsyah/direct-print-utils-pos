@@ -68,6 +68,18 @@ jobs:
 
                   echo "✅ App bundle structure created"
 
+            - name: Copy app icon
+              run: |
+                  echo "Copying app icon..."
+
+                  # Copy ICNS file for macOS
+                  if [ -f "public/logo.icns" ]; then
+                    cp public/logo.icns DirectPrintServer.app/Contents/Resources/AppIcon.icns
+                    echo "✅ App icon (ICNS) copied"
+                  else
+                    echo "⚠️  Warning: public/logo.icns not found, app will use default icon"
+                  fi
+
             - name: Copy executable to app bundle
               run: |
                   echo "Copying executable..."
@@ -178,6 +190,8 @@ WRAPPER_EOF
                       <string>en</string>
                       <key>CFBundleExecutable</key>
                       <string>DirectPrintServer</string>
+                      <key>CFBundleIconFile</key>
+                      <string>AppIcon</string>
                       <key>CFBundleIdentifier</key>
                       <string>com.aiqbalsyah.directprintserver</string>
                       <key>CFBundleInfoDictionaryVersion</key>
@@ -207,9 +221,6 @@ WRAPPER_EOF
                   EOF
 
                   echo "✅ Info.plist created"
-
-
-
 
             - name: Create README
               run: |
