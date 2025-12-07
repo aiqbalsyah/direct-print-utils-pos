@@ -4,10 +4,15 @@ on:
     workflow_dispatch:
         inputs:
             create_release:
-                description: "Create GitHub Release (requires git tag v*)"
+                description: "Create GitHub Release"
                 required: false
                 default: false
                 type: boolean
+            version:
+                description: "Version number (e.g., 1.0.0) - required if creating release"
+                required: false
+                default: ""
+                type: string
 
 jobs:
     build-msi:
@@ -230,6 +235,13 @@ jobs:
                       <WixVariable Id="WixUIBannerBmp" Value="installer\resources\banner.bmp" />
 
                       <!-- Custom Actions for Install/Uninstall Scripts -->
+                      <CustomAction Id="RunPostInstall"
+                                    FileKey="PostInstallBat"
+                                    ExeCommand=""
+                                    Execute="deferred"
+                                    Impersonate="no"
+                                    Return="check" />
+
                       <CustomAction Id="RunPreUninstall"
                                     FileKey="PreUninstallBat"
                                     ExeCommand=""
@@ -237,9 +249,30 @@ jobs:
                                     Impersonate="no"
                                     Return="ignore" />
 
+                      <!-- Custom Action to open browser after installation -->
+                      <CustomAction Id="OpenBrowserAction"
+                                    Directory="INSTALLFOLDER"
+                                    ExeCommand="cmd.exe /c timeout /t 3 /nobreak >nul &amp;&amp; start http://localhost:4000/index.html"
+                                    Execute="immediate"
+                                    Impersonate="yes"
+                                    Return="asyncNoWait" />
+
+                      <!-- Property to launch browser -->
+                      <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open Direct Print Server in browser" />
+                      <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+
                       <InstallExecuteSequence>
+                        <!-- Run post-install script after files are installed (start service) -->
+                        <Custom Action="RunPostInstall" After="InstallFiles">NOT Installed AND NOT REMOVE</Custom>
+
                         <!-- Run pre-uninstall script before RemoveFiles during uninstall -->
                         <Custom Action="RunPreUninstall" Before="RemoveFiles">REMOVE~="ALL"</Custom>
+
+                        <!-- Open browser after successful installation (only on fresh install, not upgrade) -->
+                        <!-- Delay 3 seconds to let service start -->
+                        <Custom Action="OpenBrowserAction" After="InstallFinalize">
+                          NOT Installed AND NOT REMOVE AND WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1
+                        </Custom>
                       </InstallExecuteSequence>
 
                       <!-- Check for admin privileges and show friendly error -->
@@ -371,15 +404,25 @@ jobs:
                   path: release/
                   retention-days: 90
 
+            - name: Create and push git tag
+              if: ${{ inputs.create_release == true && inputs.version != '' }}
+              run: |
+                  echo "Creating git tag v${{ inputs.version }}"
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+                  git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
+                  git push origin "v${{ inputs.version }}"
+              shell: bash
+
             - name: Create Release
-              if: ${{ inputs.create_release == true && startsWith(github.ref, 'refs/tags/v') }}
+              if: ${{ inputs.create_release == true && inputs.version != '' }}
               uses: softprops/action-gh-release@v1
               with:
                   files: |
                       DirectPrintServer.msi
                       release/scripts/**/*
-                  name: Direct Print Server v${{ github.ref_name }}
-                  tag_name: ${{ github.ref_name }}
+                  name: Direct Print Server v${{ inputs.version }}
+                  tag_name: v${{ inputs.version }}
                   body: |
                       ## 🖨️ Direct Print Server - Windows MSI Installer
 
