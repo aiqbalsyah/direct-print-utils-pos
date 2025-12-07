@@ -650,161 +650,91 @@ function printSend(cmds, callback, jobId = null) {
         return callback(res);
       }
     } else if (printerInfo.type === 'system') {
-      // Use system printer with cleaned ESC/POS commands
+      // Use system printer
       console.log(`🖨️ Using system printer: ${printerInfo.printer}`);
 
       try {
-        // Update job status: Preparing data
-        if (jobId) {
-          updatePrintJobStatus(jobId, PrintJobStatus.PREPARING, 'Cleaning ESC/POS commands...', 40);
-        }
-
-        // Clean ESC/POS commands for system printer compatibility
-        const cleanText = cleanEscPosCommands(cmds);
-        console.log('📝 Using cleaned text for system printer');
-
-        // Update job status: Sending
-        if (jobId) {
-          updatePrintJobStatus(jobId, PrintJobStatus.SENDING, 'Creating print job...', 60);
-        }
-
-        // Create a temporary file and use system print command
-        const tempFile = path.join(os.tmpdir(), `print_${Date.now()}.txt`);
-        
-        fs.writeFileSync(tempFile, cleanText, 'utf8');
-        console.log(`📄 Created temp file with cleaned text: ${tempFile}`);
-        
         if (os.platform() === 'win32') {
-          // Windows: Send RAW data directly to thermal printer
+          // Windows: Send RAW ESC/POS data directly to thermal printer
           console.log(`🚀 Windows thermal printer: ${printerInfo.printer}`);
+          console.log(`📄 Using RAW ESC/POS data (${cmds.length} bytes) - preserves formatting`);
+          const startTime = Date.now();
 
           // Update job status: Printing
           if (jobId) {
-            updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Sending to thermal printer...', 75);
+            updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Sending RAW data to thermal printer...', 75);
           }
 
-          // For thermal printers, we DON'T clean ESC/POS commands
-          // We send RAW data directly to printer port
-          console.log(`📄 Using RAW ESC/POS data (${cmds.length} bytes)`);
-          console.log(`🖨️ Target printer: ${printerInfo.printer}`);
+          // Optimized: Use compact PowerShell with pre-loaded type
+          // This avoids slow Add-Type compilation on every print job
+          const printerNameEscaped = printerInfo.printer.replace(/"/g, '""');
+          const cmdsBase64 = Buffer.from(cmds, 'binary').toString('base64');
 
-          // Write RAW data to temp file (binary mode)
-          const rawTempFile = path.join(os.tmpdir(), `print_raw_${Date.now()}.bin`);
-          fs.writeFileSync(rawTempFile, cmds, 'binary');
-
-          // Create PowerShell script file (more reliable than inline command)
-          const psScriptFile = path.join(os.tmpdir(), `print_script_${Date.now()}.ps1`);
-          const psScript = `
-# RAW Printer Helper for Thermal Printers
-# This script sends raw ESC/POS data directly to Windows printer
-
-$printerName = "${printerInfo.printer.replace(/"/g, '""')}"
-$filePath = "${rawTempFile.replace(/\\/g, '\\')}"
-
-Write-Host "Loading printer: $printerName"
-Write-Host "Reading file: $filePath"
-
-try {
-    # Read binary data
-    $bytes = [System.IO.File]::ReadAllBytes($filePath)
-    Write-Host "File size: $($bytes.Length) bytes"
-
-    # Define Windows Print Spooler API
-    $source = @"
+          // Compact PowerShell command that loads type once and prints
+          const psCommand = `
+$p='${printerNameEscaped}';
+$b=[Convert]::FromBase64String('${cmdsBase64}');
+if(!('RawPrint.Helper' -as [type])){
+Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
-
-public class RawPrinterHelper {
-    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Ansi)]
+namespace RawPrint {
+  public class Helper {
+    [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Ansi)]
     public class DOCINFOA {
-        [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
-        [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
-        [MarshalAs(UnmanagedType.LPStr)] public string pDataType;
+      [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
+      [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
+      [MarshalAs(UnmanagedType.LPStr)] public string pDataType;
     }
-
-    [DllImport("winspool.Drv", EntryPoint="OpenPrinterA", SetLastError=true, CharSet=CharSet.Ansi)]
-    public static extern bool OpenPrinter([MarshalAs(UnmanagedType.LPStr)] string szPrinter, out IntPtr hPrinter, IntPtr pd);
-
-    [DllImport("winspool.Drv", EntryPoint="ClosePrinter", SetLastError=true)]
-    public static extern bool ClosePrinter(IntPtr hPrinter);
-
-    [DllImport("winspool.Drv", EntryPoint="StartDocPrinterA", SetLastError=true, CharSet=CharSet.Ansi)]
-    public static extern bool StartDocPrinter(IntPtr hPrinter, int level, [In, MarshalAs(UnmanagedType.LPStruct)] DOCINFOA di);
-
-    [DllImport("winspool.Drv", EntryPoint="EndDocPrinter", SetLastError=true)]
-    public static extern bool EndDocPrinter(IntPtr hPrinter);
-
-    [DllImport("winspool.Drv", EntryPoint="StartPagePrinter", SetLastError=true)]
-    public static extern bool StartPagePrinter(IntPtr hPrinter);
-
-    [DllImport("winspool.Drv", EntryPoint="EndPagePrinter", SetLastError=true)]
-    public static extern bool EndPagePrinter(IntPtr hPrinter);
-
-    [DllImport("winspool.Drv", EntryPoint="WritePrinter", SetLastError=true)]
-    public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, int dwCount, out int dwWritten);
-
-    public static bool SendBytesToPrinter(string printerName, byte[] bytes) {
-        IntPtr hPrinter = IntPtr.Zero;
-        DOCINFOA di = new DOCINFOA();
-        di.pDocName = "Thermal Print Job";
-        di.pDataType = "RAW";  // RAW mode - no driver processing
-
-        bool success = false;
-
-        if (OpenPrinter(printerName, out hPrinter, IntPtr.Zero)) {
-            if (StartDocPrinter(hPrinter, 1, di)) {
-                if (StartPagePrinter(hPrinter)) {
-                    IntPtr pUnmanagedBytes = Marshal.AllocCoTaskMem(bytes.Length);
-                    Marshal.Copy(bytes, 0, pUnmanagedBytes, bytes.Length);
-                    int dwWritten;
-                    success = WritePrinter(hPrinter, pUnmanagedBytes, bytes.Length, out dwWritten);
-                    Marshal.FreeCoTaskMem(pUnmanagedBytes);
-                    EndPagePrinter(hPrinter);
-                }
-                EndDocPrinter(hPrinter);
-            }
-            ClosePrinter(hPrinter);
+    [DllImport("winspool.Drv",EntryPoint="OpenPrinterA",SetLastError=true,CharSet=CharSet.Ansi)]
+    public static extern bool OpenPrinter([MarshalAs(UnmanagedType.LPStr)] string s,out IntPtr h,IntPtr p);
+    [DllImport("winspool.Drv",EntryPoint="ClosePrinter",SetLastError=true)]
+    public static extern bool ClosePrinter(IntPtr h);
+    [DllImport("winspool.Drv",EntryPoint="StartDocPrinterA",SetLastError=true,CharSet=CharSet.Ansi)]
+    public static extern bool StartDocPrinter(IntPtr h,int l,[In,MarshalAs(UnmanagedType.LPStruct)] DOCINFOA d);
+    [DllImport("winspool.Drv",EntryPoint="EndDocPrinter",SetLastError=true)]
+    public static extern bool EndDocPrinter(IntPtr h);
+    [DllImport("winspool.Drv",EntryPoint="StartPagePrinter",SetLastError=true)]
+    public static extern bool StartPagePrinter(IntPtr h);
+    [DllImport("winspool.Drv",EntryPoint="EndPagePrinter",SetLastError=true)]
+    public static extern bool EndPagePrinter(IntPtr h);
+    [DllImport("winspool.Drv",EntryPoint="WritePrinter",SetLastError=true)]
+    public static extern bool WritePrinter(IntPtr h,IntPtr b,int c,out int w);
+    public static bool Print(string n,byte[] d){
+      IntPtr h=IntPtr.Zero;
+      var i=new DOCINFOA{pDocName="Print",pDataType="RAW"};
+      if(OpenPrinter(n,out h,IntPtr.Zero)){
+        if(StartDocPrinter(h,1,i)){
+          if(StartPagePrinter(h)){
+            IntPtr m=Marshal.AllocCoTaskMem(d.Length);
+            Marshal.Copy(d,0,m,d.Length);
+            int w;
+            bool r=WritePrinter(h,m,d.Length,out w);
+            Marshal.FreeCoTaskMem(m);
+            EndPagePrinter(h);
+            EndDocPrinter(h);
+            ClosePrinter(h);
+            return r;
+          }
         }
-        return success;
+        ClosePrinter(h);
+      }
+      return false;
     }
+  }
 }
-"@
-
-    Add-Type -TypeDefinition $source
-
-    # Send to printer
-    Write-Host "Sending to printer..."
-    $result = [RawPrinterHelper]::SendBytesToPrinter($printerName, $bytes)
-
-    if ($result) {
-        Write-Host "✅ Print job sent successfully"
-        exit 0
-    } else {
-        Write-Error "❌ Failed to send print job"
-        exit 1
-    }
-} catch {
-    Write-Error "❌ Exception: $($_.Exception.Message)"
-    exit 1
+'@
 }
-`;
+if([RawPrint.Helper]::Print($p,$b)){exit 0}else{exit 1}
+`.trim();
 
-          // Write PowerShell script to file
-          fs.writeFileSync(psScriptFile, psScript, 'utf8');
-
-          // Execute PowerShell script file
-          const psCommand = `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${psScriptFile}"`;
-
-          exec(psCommand, {
-            timeout: 30000,
+          // Execute optimized PowerShell command directly (no temp files needed)
+          exec(`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "${psCommand}"`, {
+            timeout: 10000,
             windowsHide: true
           }, (printError, stdout, stderr) => {
-            console.log('📥 Print callback triggered');
-
-            // Clean up temp files
-            try { fs.unlinkSync(tempFile); } catch(e) {}
-            try { fs.unlinkSync(rawTempFile); } catch(e) {}
-            try { fs.unlinkSync(psScriptFile); } catch(e) {}
+            const elapsed = Date.now() - startTime;
+            console.log(`⏱️ Print operation took ${elapsed}ms`);
 
             if (printError) {
               console.error('❌ Windows thermal print failed:', printError.message);
@@ -832,7 +762,23 @@ public class RawPrinterHelper {
             return callback(res);
           });
         } else {
-          // Unix/Mac: Use lp command
+          // Unix/Mac: Clean ESC/POS and use lp command
+          console.log(`🍎 Unix/Mac system printer: ${printerInfo.printer}`);
+
+          // Update job status: Preparing
+          if (jobId) {
+            updatePrintJobStatus(jobId, PrintJobStatus.PREPARING, 'Cleaning ESC/POS commands...', 40);
+          }
+
+          // Clean ESC/POS commands for system printer compatibility
+          const cleanText = cleanEscPosCommands(cmds);
+          console.log(`📄 Cleaned text (${cleanText.length} chars) - removed ESC/POS formatting`);
+
+          // Create temp file with cleaned text
+          const tempFile = path.join(os.tmpdir(), `print_${Date.now()}.txt`);
+          fs.writeFileSync(tempFile, cleanText, 'utf8');
+          console.log(`📄 Created temp file: ${tempFile}`);
+
           const printCommand = `lp -d "${printerInfo.printer}" "${tempFile}"`;
           console.log('⚡ Executing Unix print command:', printCommand);
 
