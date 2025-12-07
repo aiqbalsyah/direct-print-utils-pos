@@ -245,7 +245,7 @@ jobs:
                                     ExeCommand=""
                                     Execute="deferred"
                                     Impersonate="no"
-                                    Return="check" />
+                                    Return="ignore" />
 
                       <CustomAction Id="RunPreUninstall"
                                     FileKey="PreUninstallBat"

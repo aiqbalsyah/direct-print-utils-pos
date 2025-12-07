@@ -1,0 +1,15 @@
+[Unit]
+Description=Direct Print Server - Thermal Printer Service
+After=network.target cups.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/direct-print-server
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

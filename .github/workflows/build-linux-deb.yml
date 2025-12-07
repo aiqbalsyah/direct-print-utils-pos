@@ -99,44 +99,23 @@ jobs:
 
                   echo "✅ Files copied"
 
-            - name: Create systemd service file
+            - name: Copy systemd service file
               run: |
-                  cat > direct-print-server_1.0.0_amd64/etc/systemd/system/direct-print-server.service << 'EOF'
-                  [Unit]
-                  Description=Direct Print Server - Thermal Printer Service
-                  After=network.target cups.service
+                  echo "Copying systemd service file..."
 
-                  [Service]
-                  Type=simple
-                  User=root
-                  ExecStart=/usr/local/bin/direct-print-server
-                  Restart=always
-                  RestartSec=10
-                  StandardOutput=journal
-                  StandardError=journal
+                  # Copy from scripts/linux
+                  cp scripts/linux/direct-print-server.service direct-print-server_1.0.0_amd64/etc/systemd/system/
 
-                  [Install]
-                  WantedBy=multi-user.target
-                  EOF
+                  echo "✅ Systemd service file copied"
 
-                  echo "✅ Systemd service file created"
-
-            - name: Create desktop entry
+            - name: Copy desktop entry
               run: |
-                  cat > direct-print-server_1.0.0_amd64/usr/share/applications/direct-print-server.desktop << 'EOF'
-                  [Desktop Entry]
-                  Version=1.0
-                  Type=Application
-                  Name=Direct Print Server
-                  Comment=Thermal Printer Service for POS Systems
-                  Exec=xdg-open http://localhost:4000
-                  Icon=direct-print-server
-                  Terminal=false
-                  Categories=Office;Printing;
-                  Keywords=printer;thermal;pos;receipt;
-                  EOF
+                  echo "Copying desktop entry..."
 
-                  echo "✅ Desktop entry created"
+                  # Copy from scripts/linux
+                  cp scripts/linux/direct-print-server.desktop direct-print-server_1.0.0_amd64/usr/share/applications/
+
+                  echo "✅ Desktop entry copied"
 
             - name: Create control file
               run: |
@@ -163,97 +142,35 @@ jobs:
 
                   echo "✅ Control file created"
 
-            - name: Create postinst script
+            - name: Copy postinst script
               run: |
-                  cat > direct-print-server_1.0.0_amd64/DEBIAN/postinst << 'EOF'
-                  #!/bin/bash
-                  set -e
+                  echo "Copying postinst script..."
 
-                  echo "Setting up Direct Print Server..."
-
-                  # Ensure executable has correct permissions
-                  chmod +x /usr/local/bin/direct-print-server
-
-                  # Remove extended attributes if any
-                  setfattr -h -x user.pax.flags /usr/local/bin/direct-print-server 2>/dev/null || true
-
-                  # Fix SELinux context if SELinux is enabled
-                  if command -v restorecon > /dev/null && getenforce 2>/dev/null | grep -q "Enforcing"; then
-                      echo "Setting SELinux context..."
-                      restorecon -v /usr/local/bin/direct-print-server || true
-                  fi
-
-                  # Reload systemd
-                  systemctl daemon-reload
-
-                  # Enable service
-                  systemctl enable direct-print-server.service
-
-                  # Start service
-                  systemctl start direct-print-server.service
-
-                  # Wait for service to start
-                  sleep 3
-
-                  # Open browser to verify installation
-                  if command -v xdg-open > /dev/null; then
-                      xdg-open http://localhost:4000/index.html &
-                  elif command -v gnome-open > /dev/null; then
-                      gnome-open http://localhost:4000/index.html &
-                  fi
-
-                  echo "✅ Direct Print Server installed successfully!"
-                  echo "   Service started and enabled for auto-start"
-                  echo "   Opening browser to verify installation..."
-                  echo "   Access web interface at: http://localhost:4000"
-                  echo ""
-                  echo "Useful commands:"
-                  echo "  - Check status: systemctl status direct-print-server"
-                  echo "  - View logs: journalctl -u direct-print-server -f"
-                  echo "  - Restart: systemctl restart direct-print-server"
-
-                  exit 0
-                  EOF
-
+                  # Copy from scripts/linux
+                  cp scripts/linux/postinst direct-print-server_1.0.0_amd64/DEBIAN/
                   chmod +x direct-print-server_1.0.0_amd64/DEBIAN/postinst
-                  echo "✅ Post-install script created"
 
-            - name: Create prerm script
+                  echo "✅ Post-install script copied"
+
+            - name: Copy prerm script
               run: |
-                  cat > direct-print-server_1.0.0_amd64/DEBIAN/prerm << 'EOF'
-                  #!/bin/bash
-                  set -e
+                  echo "Copying prerm script..."
 
-                  echo "Stopping Direct Print Server..."
-
-                  # Stop service
-                  systemctl stop direct-print-server.service || true
-
-                  # Disable service
-                  systemctl disable direct-print-server.service || true
-
-                  exit 0
-                  EOF
-
+                  # Copy from scripts/linux
+                  cp scripts/linux/prerm direct-print-server_1.0.0_amd64/DEBIAN/
                   chmod +x direct-print-server_1.0.0_amd64/DEBIAN/prerm
-                  echo "✅ Pre-remove script created"
 
-            - name: Create postrm script
+                  echo "✅ Pre-remove script copied"
+
+            - name: Copy postrm script
               run: |
-                  cat > direct-print-server_1.0.0_amd64/DEBIAN/postrm << 'EOF'
-                  #!/bin/bash
-                  set -e
+                  echo "Copying postrm script..."
 
-                  # Reload systemd
-                  systemctl daemon-reload
-
-                  echo "✅ Direct Print Server removed successfully"
-
-                  exit 0
-                  EOF
-
+                  # Copy from scripts/linux
+                  cp scripts/linux/postrm direct-print-server_1.0.0_amd64/DEBIAN/
                   chmod +x direct-print-server_1.0.0_amd64/DEBIAN/postrm
-                  echo "✅ Post-remove script created"
+
+                  echo "✅ Post-remove script copied"
 
             - name: Create README documentation
               run: |

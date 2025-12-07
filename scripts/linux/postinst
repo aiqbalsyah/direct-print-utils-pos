@@ -1,0 +1,47 @@
+#!/bin/bash
+set -e
+
+echo "Setting up Direct Print Server..."
+
+# Ensure executable has correct permissions
+chmod +x /usr/local/bin/direct-print-server
+
+# Remove extended attributes if any
+setfattr -h -x user.pax.flags /usr/local/bin/direct-print-server 2>/dev/null || true
+
+# Fix SELinux context if SELinux is enabled
+if command -v restorecon > /dev/null && getenforce 2>/dev/null | grep -q "Enforcing"; then
+    echo "Setting SELinux context..."
+    restorecon -v /usr/local/bin/direct-print-server || true
+fi
+
+# Reload systemd
+systemctl daemon-reload
+
+# Enable service
+systemctl enable direct-print-server.service
+
+# Start service
+systemctl start direct-print-server.service
+
+# Wait for service to start
+sleep 3
+
+# Open browser to verify installation
+if command -v xdg-open > /dev/null; then
+    xdg-open http://localhost:4000/index.html &
+elif command -v gnome-open > /dev/null; then
+    gnome-open http://localhost:4000/index.html &
+fi
+
+echo "✅ Direct Print Server installed successfully!"
+echo "   Service started and enabled for auto-start"
+echo "   Opening browser to verify installation..."
+echo "   Access web interface at: http://localhost:4000"
+echo ""
+echo "Useful commands:"
+echo "  - Check status: systemctl status direct-print-server"
+echo "  - View logs: journalctl -u direct-print-server -f"
+echo "  - Restart: systemctl restart direct-print-server"
+
+exit 0

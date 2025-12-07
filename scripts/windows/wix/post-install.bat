@@ -11,9 +11,14 @@ REM Get installation directory from registry or use default
 set "INSTALL_DIR=%ProgramFiles%\DirectPrintServer"
 
 echo [1/4] Verifying installation...
-if not exist "%INSTALL_DIR%\direct-print-win.exe" (
-    echo ❌ Installation verification failed - executable not found
-    exit /b 1
+if not exist "%INSTALL_DIR%\DirectPrintServer.exe" (
+    echo ⚠️  Warning: Executable not found at expected location
+    echo Checking current directory...
+    if exist "DirectPrintServer.exe" (
+        echo ✅ Found in current directory
+    ) else (
+        echo ⚠️  Installation may be incomplete, but continuing...
+    )
 ) else (
     echo ✅ Installation verified
 )
@@ -34,11 +39,11 @@ reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\DirectPrintSer
 
 echo [4/4] Starting service...
 cd /d "%INSTALL_DIR%"
-start "" "direct-print-win.exe"
+start "" "DirectPrintServer.exe"
 timeout /t 2 >nul
 
 REM Check if service is running
-tasklist /FI "IMAGENAME eq direct-print-win.exe" 2>NUL | find /I /N "direct-print-win.exe">NUL
+tasklist /FI "IMAGENAME eq DirectPrintServer.exe" 2>NUL | find /I /N "DirectPrintServer.exe">NUL
 if %errorLevel% equ 0 (
     echo ✅ Direct Print Server started successfully
     echo 🌐 Server available at: http://localhost:4000

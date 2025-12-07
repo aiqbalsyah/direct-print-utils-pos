@@ -1,0 +1,12 @@
+#!/bin/bash
+set -e
+
+echo "Stopping Direct Print Server..."
+
+# Stop service
+systemctl stop direct-print-server.service || true
+
+# Disable service
+systemctl disable direct-print-server.service || true
+
+exit 0

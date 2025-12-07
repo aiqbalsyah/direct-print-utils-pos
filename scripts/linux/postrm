@@ -1,0 +1,9 @@
+#!/bin/bash
+set -e
+
+# Reload systemd
+systemctl daemon-reload
+
+echo "✅ Direct Print Server removed successfully"
+
+exit 0

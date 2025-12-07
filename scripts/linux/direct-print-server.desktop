@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Direct Print Server
+Comment=Thermal Printer Service for POS Systems
+Exec=xdg-open http://localhost:4000
+Icon=direct-print-server
+Terminal=false
+Categories=Office;Printing;
+Keywords=printer;thermal;pos;receipt;
