@@ -49,7 +49,7 @@ echo   COMPLETE STANDALONE BUILD READY!
 echo ========================================
 echo.
 echo 📦 What's included in the .exe:
-echo   ✅ Node.js runtime (v18)
+echo   ✅ Node.js runtime (v20 LTS)
 echo   ✅ All npm dependencies
 echo   ✅ USB printer drivers
 echo   ✅ Express web server

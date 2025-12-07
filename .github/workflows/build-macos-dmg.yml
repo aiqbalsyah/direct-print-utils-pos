@@ -30,8 +30,8 @@ jobs:
 
             - name: Install pkg globally
               run: |
-                  echo "Installing pkg for executable creation..."
-                  npm install -g pkg
+                  echo "Installing @yao-pkg/pkg for Node 20 support..."
+                  npm install -g @yao-pkg/pkg
 
             - name: Build macOS executable
               run: |

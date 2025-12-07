@@ -49,8 +49,8 @@ cd direct-print-utils-pos
 # 2. Install dependencies
 npm install
 
-# 3. Install pkg globally
-npm install -g pkg
+# 3. Install @yao-pkg/pkg globally (Node 20 support)
+npm install -g @yao-pkg/pkg
 
 # 4. Build for your platform
 npm run build-win      # Windows executable
@@ -60,6 +60,8 @@ npm run build-all      # All platforms
 ```
 
 **Output:** `dist/` directory with executables
+
+**Note:** We use `@yao-pkg/pkg` instead of `vercel/pkg` because it supports Node 20 LTS.
 
 ---
 
@@ -372,7 +374,7 @@ curl http://localhost:4000
 
 #### "pkg not found"
 ```bash
-npm install -g pkg
+npm install -g @yao-pkg/pkg
 ```
 
 #### "WiX Toolset not found" (Windows)
@@ -450,7 +452,7 @@ graph LR
 - [SECURITY.md](SECURITY.md) - Security policy
 
 ### Tools
-- [pkg](https://github.com/vercel/pkg) - Package Node.js apps
+- [@yao-pkg/pkg](https://github.com/yao-pkg/pkg) - Package Node.js apps (Node 20 support)
 - [WiX Toolset](https://wixtoolset.org/) - Windows installers
 - [create-dmg](https://github.com/create-dmg/create-dmg) - macOS DMG creator
 - [dpkg](https://wiki.debian.org/Teams/Dpkg) - Debian packaging

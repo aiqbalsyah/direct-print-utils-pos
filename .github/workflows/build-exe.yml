@@ -29,6 +29,12 @@ jobs:
                   npm install
               shell: cmd
 
+            - name: Install pkg globally
+              run: |
+                  echo "Installing @yao-pkg/pkg for Node 20 support..."
+                  npm install -g @yao-pkg/pkg
+              shell: cmd
+
             - name: Build executable
               run: |
                   echo "Building Windows executable..."

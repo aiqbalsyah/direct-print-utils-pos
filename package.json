@@ -54,6 +54,6 @@
     "usb": "^2.14.0"
   },
   "devDependencies": {
-    "pkg": "^5.8.1"
+    "@yao-pkg/pkg": "^5.15.0"
   }
 }

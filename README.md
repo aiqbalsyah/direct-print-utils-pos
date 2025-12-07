@@ -500,8 +500,8 @@ Akses: `http://localhost:4000/debug.html`
 ### Quick Build
 
 ```bash
-# Install pkg globally
-npm install -g pkg
+# Install @yao-pkg/pkg globally (Node 20 support)
+npm install -g @yao-pkg/pkg
 
 # Build untuk platform tertentu
 npm run build-win      # Windows .exe
@@ -511,6 +511,8 @@ npm run build-all      # All platforms
 ```
 
 **Output:** `dist/` directory
+
+**Note:** We use `@yao-pkg/pkg` (modern fork) instead of `vercel/pkg` for Node 20 LTS support.
 
 ---
 
@@ -817,13 +819,14 @@ export PORT=8080
 - **Socket.IO** - WebSocket library
 - **escpos** - ESC/POS printer library
 - **usb** - USB device access
-- **pkg** - Executable builder
+- **@yao-pkg/pkg** - Executable builder (Node 20 support)
 
 ### Build Tools
 - **WiX Toolset** - Windows MSI installer
 - **create-dmg** - macOS DMG creator
 - **dpkg** - Debian packaging
 - **GitHub Actions** - CI/CD automation
+- **@yao-pkg/pkg** - Modern fork of pkg with Node 20 LTS support
 
 ---
 
