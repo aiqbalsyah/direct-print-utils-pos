@@ -25,14 +25,30 @@ echo Installation Directory: %INSTALL_DIR%
 echo.
 
 echo [1/4] Verifying installation...
+echo DEBUG: Looking for: "%INSTALL_DIR%\DirectPrintServer.exe"
+echo DEBUG: Current directory: %CD%
+echo DEBUG: Listing files in INSTALL_DIR:
+dir "%INSTALL_DIR%" 2>nul
+echo.
+
 if not exist "%INSTALL_DIR%\DirectPrintServer.exe" (
     echo Warning: Executable not found at expected location
     echo Checking current directory...
+    dir "%CD%" | findstr /i "DirectPrint"
     if exist "DirectPrintServer.exe" (
         echo Found in current directory
         set "INSTALL_DIR=%CD%"
+    ) else if exist "%CD%\DirectPrintServer.exe" (
+        echo Found DirectPrintServer.exe in current directory
+        set "INSTALL_DIR=%CD%"
     ) else (
-        echo Installation may be incomplete, but continuing...
+        echo DEBUG: Searching common locations...
+        if exist "%ProgramFiles%\DirectPrintServer\DirectPrintServer.exe" (
+            echo Found in Program Files
+            set "INSTALL_DIR=%ProgramFiles%\DirectPrintServer"
+        ) else (
+            echo Installation may be incomplete, but continuing...
+        )
     )
 ) else (
     echo Installation verified

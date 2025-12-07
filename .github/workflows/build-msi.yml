@@ -240,7 +240,7 @@ jobs:
                       <WixVariable Id="WixUIBannerBmp" Value="installer\resources\banner.bmp" />
 
                       <!-- Custom Actions for Install/Uninstall Scripts -->
-                      <!-- Set custom action data to pass INSTALLFOLDER to deferred action -->
+                      <!-- Set custom action data to pass INSTALLFOLDER to commit action -->
                       <CustomAction Id="SetPostInstallData"
                                     Property="RunPostInstall"
                                     Value="INSTALLFOLDER=[INSTALLFOLDER]"
@@ -249,7 +249,7 @@ jobs:
                       <CustomAction Id="RunPostInstall"
                                     FileKey="PostInstallBat"
                                     ExeCommand=""
-                                    Execute="deferred"
+                                    Execute="commit"
                                     Impersonate="no"
                                     Return="ignore" />
 
@@ -278,11 +278,11 @@ jobs:
                       <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
 
                       <InstallExecuteSequence>
-                        <!-- Set data for post-install script (must run before deferred action) -->
-                        <Custom Action="SetPostInstallData" Before="RunPostInstall">NOT Installed AND NOT REMOVE</Custom>
+                        <!-- Set data for post-install script (immediate, stores data for commit action) -->
+                        <Custom Action="SetPostInstallData" After="InstallFiles">NOT Installed AND NOT REMOVE</Custom>
 
-                        <!-- Run post-install script after files are installed (start service) -->
-                        <Custom Action="RunPostInstall" After="InstallFiles">NOT Installed AND NOT REMOVE</Custom>
+                        <!-- Run post-install script (commit, runs after files are written to disk) -->
+                        <Custom Action="RunPostInstall" After="InstallFinalize">NOT Installed AND NOT REMOVE</Custom>
 
                         <!-- Set data for pre-uninstall script (must run before deferred action) -->
                         <Custom Action="SetPreUninstallData" Before="RunPreUninstall">REMOVE~="ALL"</Custom>
