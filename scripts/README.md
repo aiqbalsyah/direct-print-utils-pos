@@ -12,6 +12,8 @@ scripts/
 │   └── README.txt         # User documentation for DMG
 │
 ├── linux/              # Linux DEB package scripts
+│   ├── build-deb.sh       # Builds the .deb (used locally and by CI)
+│   ├── install.sh         # One-line installer (downloads latest release)
 │   ├── postinst           # Post-installation script
 │   ├── prerm              # Pre-removal script
 │   ├── postrm             # Post-removal script
@@ -47,8 +49,8 @@ User-facing installation instructions included in DMG
 Post-installation script
 - Sets permissions & removes extended attributes
 - Fixes SELinux context
-- Enables & starts systemd service
-- Opens browser
+- Enables & starts (or restarts on upgrade) the systemd service
+- Warns if no CUPS printer is configured
 
 ### prerm / postrm
 Removal scripts

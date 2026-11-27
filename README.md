@@ -126,13 +126,15 @@ http://localhost:4000
 
 **Native Linux package dengan Systemd integration.**
 
-**Download & Install:**
+**Install satu baris (otomatis amd64/arm64):**
 ```bash
-# Download DEB package
-wget https://github.com/aiqbalsyah/direct-print-utils-pos/releases/download/v1.0.0/direct-print-server_1.0.0_amd64.deb
+curl -fsSL https://raw.githubusercontent.com/aiqbalsyah/direct-print-utils-pos/main/scripts/linux/install.sh | sudo bash
+```
 
-# Install
-sudo dpkg -i direct-print-server_1.0.0_amd64.deb
+**Atau manual** (download `.deb` dari [Releases](https://github.com/aiqbalsyah/direct-print-utils-pos/releases)):
+```bash
+# apt (bukan dpkg -i) supaya dependency cups-client ikut terpasang
+sudo apt install ./Direct-Print-Server-v<VERSI>-linux-amd64.deb
 
 # Verify
 systemctl status direct-print-server
@@ -163,12 +165,12 @@ systemctl status direct-print-server
 sudo journalctl -u direct-print-server -f
 
 # Uninstall
-sudo dpkg -r direct-print-server
+sudo apt remove direct-print-server
 ```
 
 **Supported Distributions:**
 - Ubuntu 20.04+ (Focal, Jammy, Noble)
-- Debian 10+ (Buster, Bullseye, Bookworm)
+- Debian 11+ (Bullseye, Bookworm)
 - Linux Mint 20+
 - Pop!_OS 20.04+
 

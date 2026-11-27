@@ -1,12 +1,19 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
-echo "Stopping Direct Print Server..."
+SERVICE=direct-print-server.service
 
-# Stop service
-systemctl stop direct-print-server.service || true
-
-# Disable service
-systemctl disable direct-print-server.service || true
+if [ -d /run/systemd/system ]; then
+    case "$1" in
+        remove|deconfigure)
+            systemctl stop $SERVICE || true
+            systemctl disable $SERVICE || true
+            ;;
+        upgrade)
+            # Keep it enabled; postinst of the new version restarts it.
+            systemctl stop $SERVICE || true
+            ;;
+    esac
+fi
 
 exit 0

@@ -1,47 +1,39 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
-echo "Setting up Direct Print Server..."
+SERVICE=direct-print-server.service
 
-# Ensure executable has correct permissions
-chmod +x /usr/local/bin/direct-print-server
+if [ "$1" = "configure" ]; then
+    # Older releases installed into /usr/local and /etc/systemd/system.
+    # A leftover unit there would override the packaged one.
+    if [ -f /etc/systemd/system/$SERVICE ] && ! dpkg -S /etc/systemd/system/$SERVICE >/dev/null 2>&1; then
+        rm -f /etc/systemd/system/$SERVICE
+    fi
 
-# Remove extended attributes if any
-setfattr -h -x user.pax.flags /usr/local/bin/direct-print-server 2>/dev/null || true
+    if command -v restorecon >/dev/null 2>&1; then
+        restorecon /usr/bin/direct-print-server 2>/dev/null || true
+    fi
 
-# Fix SELinux context if SELinux is enabled
-if command -v restorecon > /dev/null && getenforce 2>/dev/null | grep -q "Enforcing"; then
-    echo "Setting SELinux context..."
-    restorecon -v /usr/local/bin/direct-print-server || true
+    # Only talk to systemd when it is actually running (not in containers/chroots).
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload || true
+        systemctl enable $SERVICE || true
+        if [ -n "$2" ]; then
+            systemctl restart $SERVICE || echo "WARNING: could not restart $SERVICE (see: journalctl -u direct-print-server)"
+        else
+            systemctl start $SERVICE || echo "WARNING: could not start $SERVICE (see: journalctl -u direct-print-server)"
+        fi
+    fi
+
+    echo ""
+    echo "Direct Print Server installed."
+    echo "  Web interface : http://localhost:4000"
+    echo "  Status        : systemctl status direct-print-server"
+    echo "  Logs          : journalctl -u direct-print-server -f"
+    if ! lpstat -p >/dev/null 2>&1; then
+        echo "  NOTE: no CUPS printer found yet. Add your printer in Settings > Printers"
+        echo "        or http://localhost:631, then check with: lpstat -p -d"
+    fi
 fi
-
-# Reload systemd
-systemctl daemon-reload
-
-# Enable service
-systemctl enable direct-print-server.service
-
-# Start service
-systemctl start direct-print-server.service
-
-# Wait for service to start
-sleep 3
-
-# Open browser to verify installation
-if command -v xdg-open > /dev/null; then
-    xdg-open http://localhost:4000/index.html &
-elif command -v gnome-open > /dev/null; then
-    gnome-open http://localhost:4000/index.html &
-fi
-
-echo "✅ Direct Print Server installed successfully!"
-echo "   Service started and enabled for auto-start"
-echo "   Opening browser to verify installation..."
-echo "   Access web interface at: http://localhost:4000"
-echo ""
-echo "Useful commands:"
-echo "  - Check status: systemctl status direct-print-server"
-echo "  - View logs: journalctl -u direct-print-server -f"
-echo "  - Restart: systemctl restart direct-print-server"
 
 exit 0

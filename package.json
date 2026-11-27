@@ -21,6 +21,7 @@
     "build-mac": "pkg . --targets node20-macos-x64 --output ./dist/direct-print-macos",
     "build-linux": "pkg . --targets node20-linux-x64 --output ./dist/direct-print-linux",
     "build-all": "npm run build-win && npm run build-mac && npm run build-linux",
+    "build-deb": "bash scripts/linux/build-deb.sh",
     "build-complete": "build-complete.bat",
     "install-service": "node scripts/install-service.js",
     "uninstall-service": "node scripts/uninstall-service.js",

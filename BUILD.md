@@ -120,20 +120,27 @@ npm run build-linux
 
 **GitHub Actions:**
 - Workflow: `.github/workflows/build-linux-deb.yml`
-- Trigger: Manual dispatch or git tag `v*`
-- Artifact: `direct-print-linux-deb-{sha}`
+- Trigger: Manual dispatch (amd64 + arm64, install smoke-test included)
+- Artifact: `direct-print-linux-deb-{amd64,arm64}`
+
+**Build lokal** (butuh `dpkg-deb`; di macOS jalankan di Docker):
+```bash
+npm run build-deb                       # versi dari package.json, amd64
+scripts/linux/build-deb.sh 1.2.0 arm64  # versi & arsitektur eksplisit
+# Output: dist/direct-print-server_<versi>_<arch>.deb
+```
 
 **Package Contents:**
 ```
-/usr/local/bin/direct-print-server              # Main executable
-/etc/systemd/system/direct-print-server.service # Systemd service
+/usr/bin/direct-print-server                     # Main executable
+/lib/systemd/system/direct-print-server.service  # Systemd service
 /usr/share/applications/direct-print-server.desktop
 /usr/share/doc/direct-print-server/README
 ```
 
 **Installation:**
 ```bash
-sudo dpkg -i direct-print-server_1.0.0_amd64.deb
+sudo apt install ./direct-print-server_1.0.0_amd64.deb
 ```
 
 **Features:**
@@ -346,7 +353,7 @@ msiexec /i DirectPrintServer.msi /l*v install.log
 #### Linux DEB
 ```bash
 # Install
-sudo dpkg -i direct-print-server_1.0.0_amd64.deb
+sudo apt install ./direct-print-server_1.0.0_amd64.deb
 
 # Verify
 systemctl status direct-print-server

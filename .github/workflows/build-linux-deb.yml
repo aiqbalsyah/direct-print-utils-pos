@@ -9,434 +9,111 @@ on:
                 default: false
                 type: boolean
             version:
-                description: "Version number (e.g., 1.0.0) - required if creating release"
+                description: "Version number (e.g., 1.0.0) - defaults to package.json version; required if creating release"
                 required: false
                 default: ""
                 type: string
 
 jobs:
     build-deb:
-        runs-on: ubuntu-latest
-        name: Build Linux DEB Package
-        permissions:
-            contents: write  # Required for creating tags and releases
+        name: Build DEB (${{ matrix.arch }})
+        runs-on: ${{ matrix.runner }}
+        strategy:
+            matrix:
+                include:
+                    - arch: amd64
+                      runner: ubuntu-24.04
+                    - arch: arm64
+                      runner: ubuntu-24.04-arm
 
         steps:
-            - name: Checkout code
-              uses: actions/checkout@v4
-              with:
-                  fetch-depth: 0  # Fetch all history for tagging
-                  persist-credentials: true
+            - uses: actions/checkout@v4
 
-            - name: Setup Node.js 20
-              uses: actions/setup-node@v4
+            - uses: actions/setup-node@v4
               with:
                   node-version: "20"
+                  cache: npm
 
             - name: Install dependencies
+              run: npm ci || npm install
+
+            - name: Resolve version
+              id: ver
               run: |
-                  echo "Installing Node.js dependencies..."
-                  npm install
+                  VERSION="${{ inputs.version }}"
+                  [ -z "$VERSION" ] && VERSION="$(node -p "require('./package.json').version")"
+                  echo "version=${VERSION#v}" >> "$GITHUB_OUTPUT"
 
-            - name: Install pkg globally
+            - name: Build DEB
+              run: scripts/linux/build-deb.sh "${{ steps.ver.outputs.version }}" "${{ matrix.arch }}"
+
+            - name: Lint package
               run: |
-                  echo "Installing @yao-pkg/pkg for Node 20 support..."
-                  npm install -g @yao-pkg/pkg
+                  sudo apt-get update -qq && sudo apt-get install -y -qq lintian
+                  lintian --no-tag-display-limit dist/*.deb || true
 
-            - name: Build Linux executable
+            - name: Smoke test (install, run, remove)
               run: |
-                  echo "Building Linux x64 executable..."
-                  pkg . --targets node20-linux-x64 --output ./dist/direct-print-linux
-                  chmod +x ./dist/direct-print-linux
+                  DEB="$(ls dist/direct-print-server_*_${{ matrix.arch }}.deb)"
+                  sudo apt-get install -y "./$DEB"
+                  systemctl is-active direct-print-server
+                  for i in $(seq 1 20); do curl -fsS http://localhost:4000/printers && break; sleep 1; done
+                  curl -fsS http://localhost:4000/html/index.html >/dev/null
+                  sudo apt-get remove -y direct-print-server
+                  ! systemctl is-active direct-print-server
 
-                  echo "Verifying executable..."
-                  ls -lh ./dist/direct-print-linux
-                  file ./dist/direct-print-linux
-
-                  # Remove extended attributes if any (similar to macOS xattr)
-                  echo "Removing extended attributes..."
-                  setfattr -h -x user.pax.flags ./dist/direct-print-linux 2>/dev/null || true
-
-            - name: Install DEB packaging tools
-              run: |
-                  echo "Installing dpkg-deb and fakeroot..."
-                  sudo apt-get update
-                  sudo apt-get install -y dpkg-dev fakeroot
-
-            - name: Create DEB package structure
-              run: |
-                  echo "Creating DEB package directory structure..."
-
-                  # Create package directory
-                  mkdir -p direct-print-server_1.0.0_amd64/DEBIAN
-                  mkdir -p direct-print-server_1.0.0_amd64/usr/local/bin
-                  mkdir -p direct-print-server_1.0.0_amd64/usr/local/share/direct-print-server
-                  mkdir -p direct-print-server_1.0.0_amd64/etc/systemd/system
-                  mkdir -p direct-print-server_1.0.0_amd64/usr/share/applications
-                  mkdir -p direct-print-server_1.0.0_amd64/usr/share/doc/direct-print-server
-                  mkdir -p direct-print-server_1.0.0_amd64/usr/share/pixmaps
-
-                  echo "✅ DEB structure created"
-
-            - name: Copy executable and assets
-              run: |
-                  echo "Copying application files..."
-
-                  # Copy executable
-                  cp dist/direct-print-linux direct-print-server_1.0.0_amd64/usr/local/bin/direct-print-server
-                  chmod +x direct-print-server_1.0.0_amd64/usr/local/bin/direct-print-server
-
-                  # Copy public assets
-                  if [ -d "public" ]; then
-                    cp -r public/* direct-print-server_1.0.0_amd64/usr/local/share/direct-print-server/
-                  fi
-
-                  # Copy app icon for Linux
-                  if [ -f "public/logo.png" ]; then
-                    cp public/logo.png direct-print-server_1.0.0_amd64/usr/share/pixmaps/direct-print-server.png
-                    echo "✅ App icon copied"
-                  fi
-
-                  echo "✅ Files copied"
-
-            - name: Copy systemd service file
-              run: |
-                  echo "Copying systemd service file..."
-
-                  # Copy from scripts/linux
-                  cp scripts/linux/direct-print-server.service direct-print-server_1.0.0_amd64/etc/systemd/system/
-
-                  echo "✅ Systemd service file copied"
-
-            - name: Copy desktop entry
-              run: |
-                  echo "Copying desktop entry..."
-
-                  # Copy from scripts/linux
-                  cp scripts/linux/direct-print-server.desktop direct-print-server_1.0.0_amd64/usr/share/applications/
-
-                  echo "✅ Desktop entry copied"
-
-            - name: Create control file
-              run: |
-                  cat > direct-print-server_1.0.0_amd64/DEBIAN/control << 'EOF'
-                  Package: direct-print-server
-                  Version: 1.0.0
-                  Section: utils
-                  Priority: optional
-                  Architecture: amd64
-                  Depends: libcups2
-                  Maintainer: aiqbalsyah <noreply@github.com>
-                  Description: Direct Print Server - Thermal Printer Service
-                   Thermal printer service for Windows, Mac, and Linux.
-                   Supports system printers and thermal receipt printers.
-                   .
-                   Features:
-                    - Auto printer detection
-                    - WebSocket real-time tracking
-                    - ESC/POS command support
-                    - Web-based management interface
-                    - Systemd service integration
-                  Homepage: https://github.com/aiqbalsyah/direct-print-utils-pos
-                  EOF
-
-                  echo "✅ Control file created"
-
-            - name: Copy postinst script
-              run: |
-                  echo "Copying postinst script..."
-
-                  # Copy from scripts/linux
-                  cp scripts/linux/postinst direct-print-server_1.0.0_amd64/DEBIAN/
-                  chmod +x direct-print-server_1.0.0_amd64/DEBIAN/postinst
-
-                  echo "✅ Post-install script copied"
-
-            - name: Copy prerm script
-              run: |
-                  echo "Copying prerm script..."
-
-                  # Copy from scripts/linux
-                  cp scripts/linux/prerm direct-print-server_1.0.0_amd64/DEBIAN/
-                  chmod +x direct-print-server_1.0.0_amd64/DEBIAN/prerm
-
-                  echo "✅ Pre-remove script copied"
-
-            - name: Copy postrm script
-              run: |
-                  echo "Copying postrm script..."
-
-                  # Copy from scripts/linux
-                  cp scripts/linux/postrm direct-print-server_1.0.0_amd64/DEBIAN/
-                  chmod +x direct-print-server_1.0.0_amd64/DEBIAN/postrm
-
-                  echo "✅ Post-remove script copied"
-
-            - name: Create README documentation
-              run: |
-                  cat > direct-print-server_1.0.0_amd64/usr/share/doc/direct-print-server/README << 'EOF'
-                  Direct Print Server - Thermal Printer Service
-                  =============================================
-
-                  Version: 1.0.0
-
-                  INSTALLATION
-                  ------------
-                  sudo dpkg -i direct-print-server_1.0.0_amd64.deb
-
-                  USAGE
-                  -----
-                  The service starts automatically after installation.
-                  Access the web interface at: http://localhost:4000
-
-                  SYSTEMD COMMANDS
-                  ----------------
-                  Start:   sudo systemctl start direct-print-server
-                  Stop:    sudo systemctl stop direct-print-server
-                  Restart: sudo systemctl restart direct-print-server
-                  Status:  sudo systemctl status direct-print-server
-                  Logs:    sudo journalctl -u direct-print-server -f
-
-                  UNINSTALL
-                  ---------
-                  sudo dpkg -r direct-print-server
-
-                  REQUIREMENTS
-                  ------------
-                  - Ubuntu 20.04+ / Debian 10+
-                  - CUPS printing system (usually pre-installed)
-                  - Printer configured in system settings
-
-                  SUPPORT
-                  -------
-                  GitHub: https://github.com/aiqbalsyah/direct-print-utils-pos
-                  EOF
-
-                  echo "✅ README created"
-
-            - name: Set proper permissions
-              run: |
-                  echo "Setting file permissions..."
-
-                  # Set ownership (will be root after install)
-                  sudo chown -R root:root direct-print-server_1.0.0_amd64
-
-                  # Set permissions
-                  sudo chmod -R 755 direct-print-server_1.0.0_amd64/usr
-                  sudo chmod -R 755 direct-print-server_1.0.0_amd64/etc
-                  sudo chmod 644 direct-print-server_1.0.0_amd64/etc/systemd/system/direct-print-server.service
-                  sudo chmod 755 direct-print-server_1.0.0_amd64/DEBIAN
-                  sudo chmod 644 direct-print-server_1.0.0_amd64/DEBIAN/control
-
-                  echo "✅ Permissions set"
-
-            - name: Build DEB package
-              run: |
-                  echo "Building DEB package..."
-
-                  dpkg-deb --build direct-print-server_1.0.0_amd64
-
-                  echo "Verifying DEB package..."
-                  ls -lh direct-print-server_1.0.0_amd64.deb
-                  dpkg-deb --info direct-print-server_1.0.0_amd64.deb
-                  dpkg-deb --contents direct-print-server_1.0.0_amd64.deb
-
-                  echo "✅ DEB package built successfully!"
-
-            - name: Test DEB package
-              run: |
-                  echo "Testing DEB package installation (dry-run)..."
-                  sudo dpkg --dry-run -i direct-print-server_1.0.0_amd64.deb || echo "Dry-run test completed"
-
-            - name: Create release package
+            - name: Rename for release
               run: |
                   mkdir -p release
+                  cp dist/direct-print-server_*_${{ matrix.arch }}.deb \
+                     "release/Direct-Print-Server-v${{ steps.ver.outputs.version }}-linux-${{ matrix.arch }}.deb"
 
-                  # Create filename with version
-                  VERSION="${{ inputs.version }}"
-                  if [ -z "$VERSION" ]; then
-                      VERSION="latest"
-                  fi
-
-                  cp direct-print-server_1.0.0_amd64.deb "release/Direct-Print-Server-v${VERSION}-linux-amd64.deb"
-
-                  # Create installation guide
-                  cat > release/INSTALL.txt << 'EOF'
-                  ====================================================
-                    Direct Print Server - Linux DEB Package
-                  ====================================================
-
-                  INSTALLATION
-                  ------------
-                  sudo dpkg -i direct-print-server_1.0.0_amd64.deb
-
-                  The service will automatically start after installation.
-
-                  VERIFY INSTALLATION
-                  -------------------
-                  1. Check service status:
-                     systemctl status direct-print-server
-
-                  2. Open web interface:
-                     http://localhost:4000
-
-                  3. View logs:
-                     journalctl -u direct-print-server -f
-
-                  REQUIREMENTS
-                  ------------
-                  - Ubuntu 20.04+ / Debian 10+ / Linux Mint 20+
-                  - CUPS printing system
-                  - Printer configured in system
-
-                  UNINSTALL
-                  ---------
-                  sudo dpkg -r direct-print-server
-
-                  TROUBLESHOOTING
-                  ---------------
-                  Permission denied error:
-                  1. Check executable permissions: ls -l /usr/local/bin/direct-print-server
-                  2. Fix permissions: sudo chmod +x /usr/local/bin/direct-print-server
-                  3. Restart service: sudo systemctl restart direct-print-server
-
-                  SELinux issues (Fedora/RHEL/CentOS):
-                  1. Check SELinux status: getenforce
-                  2. Fix context: sudo restorecon -v /usr/local/bin/direct-print-server
-                  3. Or temporarily disable: sudo setenforce 0
-
-                  If service won't start:
-                  1. Check logs: journalctl -u direct-print-server -xe
-                  2. Verify port 4000 is available: lsof -i:4000
-                  3. Check printer setup: lpstat -p -d
-
-                  SUPPORT
-                  -------
-                  GitHub: https://github.com/aiqbalsyah/direct-print-utils-pos
-                  Issues: https://github.com/aiqbalsyah/direct-print-utils-pos/issues
-                  EOF
-
-                  echo "✅ Release package created"
-
-            - name: Upload DEB artifact
-              uses: actions/upload-artifact@v4
+            - uses: actions/upload-artifact@v4
               with:
-                  name: direct-print-linux-deb-${{ github.sha }}
+                  name: direct-print-linux-deb-${{ matrix.arch }}
                   path: release/
                   retention-days: 90
 
-            - name: Create and push git tag
-              if: ${{ inputs.create_release == true && inputs.version != '' }}
-              run: |
-                  echo "Checking if tag v${{ inputs.version }} exists..."
-
-                  if git rev-parse "v${{ inputs.version }}" >/dev/null 2>&1; then
-                      echo "✅ Tag v${{ inputs.version }} already exists, skipping tag creation"
-                  else
-                      echo "Creating git tag v${{ inputs.version }}"
-                      git config user.name "github-actions[bot]"
-                      git config user.email "github-actions[bot]@users.noreply.github.com"
-                      git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
-                      git push origin "v${{ inputs.version }}"
-                      echo "✅ Tag v${{ inputs.version }} created and pushed"
-                  fi
-
-            - name: Create Release
-              if: ${{ inputs.create_release == true && inputs.version != '' }}
-              uses: softprops/action-gh-release@v1
+    release:
+        needs: build-deb
+        if: ${{ inputs.create_release == true && inputs.version != '' }}
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/download-artifact@v4
               with:
-                  files: |
-                      release/Direct-Print-Server-v${{ inputs.version }}-linux-amd64.deb
-                      release/INSTALL.txt
-                  name: Direct Print Server v${{ inputs.version }}
+                  pattern: direct-print-linux-deb-*
+                  path: release
+                  merge-multiple: true
+
+            - name: Create or update release
+              uses: softprops/action-gh-release@v2
+              with:
                   tag_name: v${{ inputs.version }}
+                  name: Direct Print Server v${{ inputs.version }}
+                  target_commitish: ${{ github.sha }}
+                  files: release/*.deb
+                  append_body: true
                   body: |
-                      ## 🐧 Direct Print Server - Linux DEB Package
+                      ## 🐧 Ubuntu / Debian
 
-                      ### 📦 Professional Debian/Ubuntu Package
-
-                      **Features:**
-                      - ✅ **Native DEB Package** - Standard Linux package format
-                      - ✅ **Systemd Integration** - Auto-start on boot
-                      - ✅ **CUPS Support** - Works with any CUPS printer
-                      - ✅ **Easy Management** - systemctl commands
-                      - ✅ **Clean Uninstall** - Complete removal with dpkg
-
-                      ### 🚀 Quick Installation
-
+                      **Install (one line, auto-detects amd64/arm64):**
                       ```bash
-                      # Download the DEB package
-                      wget https://github.com/aiqbalsyah/direct-print-utils-pos/releases/download/v${{ inputs.version }}/Direct-Print-Server-v${{ inputs.version }}-linux-amd64.deb
-
-                      # Install
-                      sudo dpkg -i Direct-Print-Server-v${{ inputs.version }}-linux-amd64.deb
-
-                      # Verify
-                      systemctl status direct-print-server
-
-                      # Open web interface
-                      xdg-open http://localhost:4000
+                      curl -fsSL https://raw.githubusercontent.com/aiqbalsyah/direct-print-utils-pos/main/scripts/linux/install.sh | sudo VERSION=${{ inputs.version }} bash
                       ```
 
-                      ### 💻 Supported Distributions
-
-                      - Ubuntu 20.04 LTS (Focal)
-                      - Ubuntu 22.04 LTS (Jammy)
-                      - Ubuntu 24.04 LTS (Noble)
-                      - Debian 10 (Buster)
-                      - Debian 11 (Bullseye)
-                      - Debian 12 (Bookworm)
-                      - Linux Mint 20+
-                      - Pop!_OS 20.04+
-
-                      ### 🎯 Package Contents
-
-                      - `/usr/local/bin/direct-print-server` - Main executable
-                      - `/etc/systemd/system/direct-print-server.service` - Systemd service
-                      - `/usr/share/applications/direct-print-server.desktop` - Desktop entry
-                      - `/usr/share/doc/direct-print-server/` - Documentation
-
-                      ### 🔧 Management Commands
-
+                      **Or manually:**
                       ```bash
-                      # Service control
-                      sudo systemctl start direct-print-server
-                      sudo systemctl stop direct-print-server
-                      sudo systemctl restart direct-print-server
-                      sudo systemctl status direct-print-server
-
-                      # View logs
-                      sudo journalctl -u direct-print-server -f
-
-                      # Uninstall
-                      sudo dpkg -r direct-print-server
+                      sudo apt install ./Direct-Print-Server-v${{ inputs.version }}-linux-amd64.deb
                       ```
 
-                      ### 📋 Requirements
+                      Service starts automatically → http://localhost:4000
 
-                      - CUPS printing system (usually pre-installed)
-                      - Printer configured in system settings
-                      - Port 4000 available
+                      | | |
+                      |---|---|
+                      | Status | `systemctl status direct-print-server` |
+                      | Logs | `journalctl -u direct-print-server -f` |
+                      | Uninstall | `sudo apt remove direct-print-server` |
 
-                      ### ⚠️ Troubleshooting
-
-                      **Permission Denied Error:**
-                      ```bash
-                      sudo chmod +x /usr/local/bin/direct-print-server
-                      sudo systemctl restart direct-print-server
-                      ```
-
-                      **SELinux Issues (Fedora/RHEL/CentOS):**
-                      ```bash
-                      # Fix SELinux context
-                      sudo restorecon -v /usr/local/bin/direct-print-server
-                      sudo systemctl restart direct-print-server
-                      ```
-
-                      The postinst script handles these automatically, but manual fix available if needed.
-
-                      Perfect for Linux servers and desktop deployments!
-                  draft: false
-                  prerelease: false
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                      Supported: Ubuntu 20.04+, Debian 11+, Linux Mint 20+ (amd64, arm64). Printer must be set up in CUPS.

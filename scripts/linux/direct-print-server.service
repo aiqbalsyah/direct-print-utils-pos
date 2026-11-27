@@ -1,13 +1,15 @@
 [Unit]
 Description=Direct Print Server - Thermal Printer Service
 After=network.target cups.service
+Wants=cups.service
 
 [Service]
 Type=simple
+# root is needed for raw USB access to thermal printers via libusb
 User=root
-ExecStart=/usr/local/bin/direct-print-server
+ExecStart=/usr/bin/direct-print-server
 Restart=always
-RestartSec=10
+RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
