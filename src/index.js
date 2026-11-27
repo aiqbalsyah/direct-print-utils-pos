@@ -3,7 +3,7 @@ const { createServer } = require('node:http');
 const { join } = require('node:path');
 const { Server } = require('socket.io');
 const os = require('os');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -248,6 +248,12 @@ function getDefaultPrinter(callback) {
   }
 }
 
+// Prefer the default printer unless it is virtual (BRF/PDF); then first real one
+function pickPrinter(printers, defaultPrinter) {
+  if (defaultPrinter && !isVirtualPrinter(defaultPrinter)) return defaultPrinter;
+  return printers.find(p => !isVirtualPrinter(p)) || defaultPrinter || printers[0];
+}
+
 // Function to check if USB printer is available, with fallback to system printer
 function checkPrinterAvailability(callback) {
   // On Windows, skip USB entirely and go straight to system printers
@@ -258,7 +264,7 @@ function checkPrinterAvailability(callback) {
       if (printers.length > 0) {
         console.log('Found system printers:', printers);
         getDefaultPrinter((defaultPrinter) => {
-          const printerToUse = defaultPrinter || printers[0];
+          const printerToUse = pickPrinter(printers, defaultPrinter);
           console.log(`Using system printer: ${printerToUse}`);
           callback({ 
             type: 'system', 
@@ -293,7 +299,7 @@ function checkPrinterAvailability(callback) {
     detectAvailablePrinters((printers) => {
       if (printers.length > 0) {
         getDefaultPrinter((defaultPrinter) => {
-          const printerToUse = defaultPrinter || printers[0];
+          const printerToUse = pickPrinter(printers, defaultPrinter);
           console.log(`Fallback to system printer: ${printerToUse}`);
           callback({ 
             type: 'system', 
@@ -364,10 +370,10 @@ function printSendWithType(cmds, printerType, callback, jobId = null) {
   if (printerType && printerType !== 'auto') {
     // Check if the requested printer exists in system printers
     detectAvailablePrinters((printers) => {
-      const requestedPrinter = printers.find(p =>
-        p.toLowerCase().includes(printerType.toLowerCase()) ||
-        printerType.toLowerCase().includes(p.toLowerCase())
-      );
+      const want = printerType.toLowerCase();
+      const requestedPrinter = printers.find(p => p === printerType) ||
+        printers.find(p => p.toLowerCase() === want) ||
+        printers.find(p => p.toLowerCase().includes(want) || want.includes(p.toLowerCase()));
 
       if (requestedPrinter) {
         console.log(`Using requested printer: ${requestedPrinter}`);
@@ -435,8 +441,161 @@ function cleanEscPosCommands(rawData) {
   return String(cleanText || '');
 }
 
+// Unix/Mac: send data to CUPS unchanged (-o raw) so ESC/POS commands
+// (cut, bold, align) and spacing reach the thermal printer intact.
+// execFile (no shell) so printer names cannot inject commands.
+function printRawUnix(cmds, printerName, callback) {
+  const tempFile = path.join(os.tmpdir(), `print_raw_${Date.now()}_${Math.random().toString(36).slice(2)}.bin`);
+  fs.writeFileSync(tempFile, cmds, 'binary');
+  console.log(`📄 RAW data (${cmds.length} bytes) -> ${tempFile}`);
+  console.log(`⚡ Executing: lp -d "${printerName}" -o raw ${tempFile}`);
+
+  execFile('lp', ['-d', printerName, '-o', 'raw', tempFile], { timeout: 15000 }, (error, stdout, stderr) => {
+    try { fs.unlinkSync(tempFile); } catch (e) {}
+    if (error) {
+      console.error('❌ Unix print error:', error.message, stderr);
+      return callback({ status: 500, message: `ERROR PRINTING TO ${printerName}: ${error.message}` });
+    }
+    console.log('✅ Unix print successful', stdout.trim());
+    return callback({ status: 200, message: `BERHASIL MENCETAK DATA (${printerName})` });
+  });
+}
+
+// Windows: send data unchanged to the spooler as a RAW document (winspool WritePrinter)
+// so ESC/POS (cut, bold, align) and spacing survive. Printer name and file path are
+// passed via environment variables, never interpolated into the script.
+const RAW_PRINT_PS = String.raw`
+$ErrorActionPreference = "Stop"
+$printerName = $env:DPS_PRINTER
+$filePath = $env:DPS_FILE
+
+Write-Host "Printer: $printerName"
+Write-Host "File: $filePath"
+
+try {
+    $bytes = [System.IO.File]::ReadAllBytes($filePath)
+    Write-Host "Read $($bytes.Length) bytes from file"
+
+    if(!('RawPrint.Helper' -as [type])){
+        Write-Host "Loading printer helper..."
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace RawPrint {
+  public class Helper {
+    [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Ansi)]
+    public class DOCINFOA {
+      [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
+      [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
+      [MarshalAs(UnmanagedType.LPStr)] public string pDataType;
+    }
+    [DllImport("winspool.Drv",EntryPoint="OpenPrinterA",SetLastError=true,CharSet=CharSet.Ansi)]
+    public static extern bool OpenPrinter([MarshalAs(UnmanagedType.LPStr)] string s,out IntPtr h,IntPtr p);
+    [DllImport("winspool.Drv",EntryPoint="ClosePrinter",SetLastError=true)]
+    public static extern bool ClosePrinter(IntPtr h);
+    [DllImport("winspool.Drv",EntryPoint="StartDocPrinterA",SetLastError=true,CharSet=CharSet.Ansi)]
+    public static extern bool StartDocPrinter(IntPtr h,int l,[In,MarshalAs(UnmanagedType.LPStruct)] DOCINFOA d);
+    [DllImport("winspool.Drv",EntryPoint="EndDocPrinter",SetLastError=true)]
+    public static extern bool EndDocPrinter(IntPtr h);
+    [DllImport("winspool.Drv",EntryPoint="StartPagePrinter",SetLastError=true)]
+    public static extern bool StartPagePrinter(IntPtr h);
+    [DllImport("winspool.Drv",EntryPoint="EndPagePrinter",SetLastError=true)]
+    public static extern bool EndPagePrinter(IntPtr h);
+    [DllImport("winspool.Drv",EntryPoint="WritePrinter",SetLastError=true)]
+    public static extern bool WritePrinter(IntPtr h,IntPtr b,int c,out int w);
+    public static bool Print(string n,byte[] d){
+      IntPtr h=IntPtr.Zero;
+      var i=new DOCINFOA{pDocName="Thermal Receipt",pDataType="RAW"};
+      if(OpenPrinter(n,out h,IntPtr.Zero)){
+        if(StartDocPrinter(h,1,i)){
+          if(StartPagePrinter(h)){
+            IntPtr m=Marshal.AllocCoTaskMem(d.Length);
+            Marshal.Copy(d,0,m,d.Length);
+            int w;
+            bool r=WritePrinter(h,m,d.Length,out w);
+            Marshal.FreeCoTaskMem(m);
+            EndPagePrinter(h);
+            EndDocPrinter(h);
+            ClosePrinter(h);
+            return r;
+          }
+        }
+        ClosePrinter(h);
+      }
+      return false;
+    }
+  }
+}
+'@
+    } else {
+        Write-Host "Printer helper already loaded"
+    }
+
+    Write-Host "Sending to printer..."
+    $result = [RawPrint.Helper]::Print($printerName, $bytes)
+
+    if($result) {
+        Write-Host "SUCCESS: Print job sent"
+        exit 0
+    } else {
+        Write-Error "FAILED: WritePrinter returned false"
+        exit 1
+    }
+} catch {
+    Write-Error "ERROR: $($_.Exception.Message)"
+    Write-Error $_.ScriptStackTrace
+    exit 1
+}
+`;
+
+function printRawWindows(cmds, printerName, callback) {
+  const tag = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const rawFile = path.join(os.tmpdir(), `print_raw_${tag}.bin`);
+  const psFile = path.join(os.tmpdir(), `print_script_${tag}.ps1`);
+  fs.writeFileSync(rawFile, cmds, 'binary');
+  fs.writeFileSync(psFile, RAW_PRINT_PS, 'utf8');
+  console.log(`🚀 Windows RAW print to "${printerName}" (${cmds.length} bytes)`);
+  const started = Date.now();
+
+  execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile], {
+    timeout: 20000,
+    windowsHide: true,
+    env: { ...process.env, DPS_PRINTER: printerName, DPS_FILE: rawFile }
+  }, (error, stdout, stderr) => {
+    try { fs.unlinkSync(rawFile); } catch (e) {}
+    try { fs.unlinkSync(psFile); } catch (e) {}
+    console.log(`⏱️ Print operation took ${Date.now() - started}ms`);
+    if (stdout) console.log('stdout:', stdout.trim());
+    if (error) {
+      console.error('❌ Windows RAW print failed:', error.message, stderr);
+      return callback({ status: 500, message: `ERROR: Tidak dapat mencetak ke ${printerName}. ${error.message}` });
+    }
+    return callback({ status: 200, message: `BERHASIL MENCETAK DATA (${printerName})` });
+  });
+}
+
+// Virtual queues that never produce paper: CUPS Braille/PDF, Windows PDF/XPS/Fax/OneNote
+function isVirtualPrinter(name) {
+  return /(^|[-_ ])(BRF|PDF)([-_ ]|$)|cups-brf|cups-pdf|print to pdf|xps document writer|onenote|^fax$|^fax /i.test(name || '');
+}
+
 // Function to print directly to a specific system printer
 function printWithSystemPrinter(cmds, printerName, callback, jobId = null) {
+  // RAW everywhere, except the Windows "dot-matrix" queue which keeps the legacy
+  // plain-text path (the POS formats dot-matrix receipts separately by that name).
+  const legacyText = os.platform() === 'win32' && printerName.toLowerCase() === 'dot-matrix';
+  if (!legacyText) {
+    if (jobId) updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, `Sending to ${printerName}...`, 75);
+    const sendRaw = os.platform() === 'win32' ? printRawWindows : printRawUnix;
+    return sendRaw(cmds, printerName, (result) => {
+      if (jobId) {
+        if (result.status === 200) updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, result.message, 100);
+        else updatePrintJobStatus(jobId, PrintJobStatus.ERROR, result.message, 0, result.message);
+      }
+      callback(result);
+    });
+  }
+
   const res = {};
   
   console.log(`🖨️ Printing to system printer: ${printerName}`);
@@ -654,203 +813,17 @@ function printSend(cmds, callback, jobId = null) {
       console.log(`🖨️ Using system printer: ${printerInfo.printer}`);
 
       try {
-        if (os.platform() === 'win32') {
-          // Windows: Send RAW ESC/POS data directly to thermal printer
-          console.log(`🚀 Windows thermal printer: ${printerInfo.printer}`);
-          console.log(`📄 Using RAW ESC/POS data (${cmds.length} bytes) - preserves formatting`);
-          const startTime = Date.now();
-
-          // Update job status: Printing
-          if (jobId) {
-            updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Sending RAW data to thermal printer...', 75);
-          }
-
-          // Write RAW data to temp file (more reliable than inline Base64)
-          const rawTempFile = path.join(os.tmpdir(), `print_raw_${Date.now()}.bin`);
-          fs.writeFileSync(rawTempFile, cmds, 'binary');
-          console.log(`📄 Created temp file: ${rawTempFile}`);
-
-          // Create PowerShell script with better error handling and logging
-          const printerNameEscaped = printerInfo.printer.replace(/"/g, '""').replace(/'/g, "''");
-          const rawTempFileEscaped = rawTempFile.replace(/\\/g, '\\\\');
-
-          const psScriptFile = path.join(os.tmpdir(), `print_script_${Date.now()}.ps1`);
-          const psScript = `
-$ErrorActionPreference = "Stop"
-$printerName = "${printerNameEscaped}"
-$filePath = "${rawTempFileEscaped}"
-
-Write-Host "Printer: $printerName"
-Write-Host "File: $filePath"
-
-try {
-    $bytes = [System.IO.File]::ReadAllBytes($filePath)
-    Write-Host "Read $($bytes.Length) bytes from file"
-
-    if(!('RawPrint.Helper' -as [type])){
-        Write-Host "Loading printer helper..."
-        Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-namespace RawPrint {
-  public class Helper {
-    [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Ansi)]
-    public class DOCINFOA {
-      [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
-      [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
-      [MarshalAs(UnmanagedType.LPStr)] public string pDataType;
-    }
-    [DllImport("winspool.Drv",EntryPoint="OpenPrinterA",SetLastError=true,CharSet=CharSet.Ansi)]
-    public static extern bool OpenPrinter([MarshalAs(UnmanagedType.LPStr)] string s,out IntPtr h,IntPtr p);
-    [DllImport("winspool.Drv",EntryPoint="ClosePrinter",SetLastError=true)]
-    public static extern bool ClosePrinter(IntPtr h);
-    [DllImport("winspool.Drv",EntryPoint="StartDocPrinterA",SetLastError=true,CharSet=CharSet.Ansi)]
-    public static extern bool StartDocPrinter(IntPtr h,int l,[In,MarshalAs(UnmanagedType.LPStruct)] DOCINFOA d);
-    [DllImport("winspool.Drv",EntryPoint="EndDocPrinter",SetLastError=true)]
-    public static extern bool EndDocPrinter(IntPtr h);
-    [DllImport("winspool.Drv",EntryPoint="StartPagePrinter",SetLastError=true)]
-    public static extern bool StartPagePrinter(IntPtr h);
-    [DllImport("winspool.Drv",EntryPoint="EndPagePrinter",SetLastError=true)]
-    public static extern bool EndPagePrinter(IntPtr h);
-    [DllImport("winspool.Drv",EntryPoint="WritePrinter",SetLastError=true)]
-    public static extern bool WritePrinter(IntPtr h,IntPtr b,int c,out int w);
-    public static bool Print(string n,byte[] d){
-      IntPtr h=IntPtr.Zero;
-      var i=new DOCINFOA{pDocName="Thermal Receipt",pDataType="RAW"};
-      if(OpenPrinter(n,out h,IntPtr.Zero)){
-        if(StartDocPrinter(h,1,i)){
-          if(StartPagePrinter(h)){
-            IntPtr m=Marshal.AllocCoTaskMem(d.Length);
-            Marshal.Copy(d,0,m,d.Length);
-            int w;
-            bool r=WritePrinter(h,m,d.Length,out w);
-            Marshal.FreeCoTaskMem(m);
-            EndPagePrinter(h);
-            EndDocPrinter(h);
-            ClosePrinter(h);
-            return r;
-          }
+        const sendRaw = os.platform() === 'win32' ? printRawWindows : printRawUnix;
+        if (jobId) {
+          updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Sending RAW data to printer...', 75);
         }
-        ClosePrinter(h);
-      }
-      return false;
-    }
-  }
-}
-'@
-    } else {
-        Write-Host "Printer helper already loaded"
-    }
-
-    Write-Host "Sending to printer..."
-    $result = [RawPrint.Helper]::Print($printerName, $bytes)
-
-    if($result) {
-        Write-Host "SUCCESS: Print job sent"
-        exit 0
-    } else {
-        Write-Error "FAILED: WritePrinter returned false"
-        exit 1
-    }
-} catch {
-    Write-Error "ERROR: $($_.Exception.Message)"
-    Write-Error $_.ScriptStackTrace
-    exit 1
-}
-`.trim();
-
-          fs.writeFileSync(psScriptFile, psScript, 'utf8');
-          console.log(`📄 Created PowerShell script: ${psScriptFile}`);
-
-          // Execute PowerShell script file
-          exec(`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${psScriptFile}"`, {
-            timeout: 10000,
-            windowsHide: false
-          }, (printError, stdout, stderr) => {
-            const elapsed = Date.now() - startTime;
-            console.log(`⏱️ Print operation took ${elapsed}ms`);
-
-            // Clean up temp files
-            try { fs.unlinkSync(rawTempFile); } catch(e) {}
-            try { fs.unlinkSync(psScriptFile); } catch(e) {}
-
-            if (printError) {
-              console.error('❌ Windows thermal print failed:', printError.message);
-              if (stderr) console.error('stderr:', stderr);
-
-              res.message = `ERROR: Tidak dapat mencetak ke ${printerInfo.printer}. ${printError.message}`;
-              res.status = 500;
-
-              if (jobId) {
-                updatePrintJobStatus(jobId, PrintJobStatus.ERROR, res.message, 0, printError.message);
-              }
-            } else {
-              console.log('✅ RAW data sent to thermal printer');
-              if (stdout) console.log('stdout:', stdout);
-
-              res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
-              res.status = 200;
-
-              if (jobId) {
-                updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, res.message, 100);
-              }
-            }
-
-            console.log('🎯 Calling callback');
-            return callback(res);
-          });
-        } else {
-          // Unix/Mac: Clean ESC/POS and use lp command
-          console.log(`🍎 Unix/Mac system printer: ${printerInfo.printer}`);
-
-          // Update job status: Preparing
+        sendRaw(cmds, printerInfo.printer, (result) => {
           if (jobId) {
-            updatePrintJobStatus(jobId, PrintJobStatus.PREPARING, 'Cleaning ESC/POS commands...', 40);
+            if (result.status === 200) updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, result.message, 100);
+            else updatePrintJobStatus(jobId, PrintJobStatus.ERROR, result.message, 0, result.message);
           }
-
-          // Clean ESC/POS commands for system printer compatibility
-          const cleanText = cleanEscPosCommands(cmds);
-          console.log(`📄 Cleaned text (${cleanText.length} chars) - removed ESC/POS formatting`);
-
-          // Create temp file with cleaned text
-          const tempFile = path.join(os.tmpdir(), `print_${Date.now()}.txt`);
-          fs.writeFileSync(tempFile, cleanText, 'utf8');
-          console.log(`📄 Created temp file: ${tempFile}`);
-
-          const printCommand = `lp -d "${printerInfo.printer}" "${tempFile}"`;
-          console.log('⚡ Executing Unix print command:', printCommand);
-
-          // Update job status: Printing
-          if (jobId) {
-            updatePrintJobStatus(jobId, PrintJobStatus.PRINTING, 'Sending to Unix/Mac printer...', 75);
-          }
-
-          exec(printCommand, { timeout: 15000 }, (error, stdout, stderr) => {
-            try { fs.unlinkSync(tempFile); } catch(e) {}
-
-            if (error) {
-              console.error('❌ Unix print error:', error);
-              console.log('stderr:', stderr);
-              res.message = `ERROR SYSTEM PRINT: ${error.message}`;
-              res.status = 500;
-
-              // Update job status: Error
-              if (jobId) {
-                updatePrintJobStatus(jobId, PrintJobStatus.ERROR, res.message, 0, error.message);
-              }
-            } else {
-              console.log('✅ Unix print successful');
-              res.message = `BERHASIL MENCETAK DATA (${printerInfo.printer})`;
-              res.status = 200;
-
-              // Update job status: Success
-              if (jobId) {
-                updatePrintJobStatus(jobId, PrintJobStatus.SUCCESS, res.message, 100);
-              }
-            }
-            return callback(res);
-          });
-        }
+          return callback(result);
+        });
       } catch (e) {
         console.error(`❌ ERROR SYSTEM PRINTER: ${e}`);
         res.message = `ERROR SYSTEM PRINTER: ${e.message}`;
@@ -1058,8 +1031,14 @@ End of test print
       res.json(result);
     });
   } else {
-    printWithSystemPrinter(testData, printerName, (result) => {
-      res.json(result);
+    // only print to an installed printer; the name ends up in OS print commands
+    detectAvailablePrinters((printers) => {
+      if (typeof printerName !== 'string' || !printers.includes(printerName)) {
+        return res.status(400).json({ status: 400, message: `Printer tidak ditemukan: ${printerName}` });
+      }
+      printWithSystemPrinter(testData, printerName, (result) => {
+        res.json(result);
+      });
     });
   }
 });
@@ -1211,6 +1190,13 @@ io.on('connection', (socket) => {
     console.log('🏓 Ping received from:', socket.id);
     socket.emit('pong');
   });
+});
+
+// Exit on listen errors (e.g. port 4000 already in use) so the service manager
+// (WinSW / systemd) restarts us instead of leaving a process that serves nothing.
+server.on('error', (err) => {
+  console.error('❌ Server error:', err.message);
+  process.exit(1);
 });
 
 server.listen(4000, () => {

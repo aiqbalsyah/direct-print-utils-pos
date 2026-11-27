@@ -81,26 +81,28 @@
 **Professional Windows installer dengan Service integration.**
 
 **Download & Install:**
-1. Download `DirectPrintServer.msi` dari [GitHub Releases](https://github.com/aiqbalsyah/direct-print-utils-pos/releases)
+1. Download `Direct-Print-Server-v<VERSI>-windows.msi` dari [GitHub Releases](https://github.com/aiqbalsyah/direct-print-utils-pos/releases)
 2. **RIGHT-CLICK** pada file MSI → **"Run as administrator"**
 3. Follow installation wizard
-4. Service akan otomatis start
+4. Selesai, server jalan sebagai **Windows Service** `DirectPrintServer`. Tidak perlu membuka aplikasi apa pun; jalan otomatis saat Windows nyala dan restart sendiri kalau crash.
 
-**⚠️ PENTING:**
-- **HARUS** right-click → "Run as administrator"
-- **JANGAN** double-click MSI file (akan error)
+Versi lama (yang harus dibuka manual) ter-upgrade otomatis oleh MSI baru.
 
 **Features:**
 - ✅ Auto-install ke `C:\Program Files\DirectPrintServer`
-- ✅ Windows Service (auto-start on boot)
-- ✅ Start Menu shortcut
-- ✅ Add/Remove Programs integration
-- ✅ Clean uninstall
+- ✅ Windows Service lewat [WinSW](https://github.com/winsw/winsw) (auto-start on boot, auto-restart)
+- ✅ Start Menu shortcut → halaman status http://localhost:4000
+- ✅ Add/Remove Programs integration, clean uninstall
 
-**Verifikasi:**
+**Management:**
+```bat
+sc query DirectPrintServer          :: status
+sc stop DirectPrintServer           :: stop
+sc start DirectPrintServer          :: start
 ```
-http://localhost:4000
-```
+Log: `C:\Program Files\DirectPrintServer\logs\DirectPrintService.out.log`
+
+**⚠️ Catatan printer:** service berjalan sebagai akun SYSTEM, yang *default printer*-nya bisa berbeda dari user kasir. Pilih printer secara eksplisit di kasir (F2), atau pastikan printer thermal terpasang untuk semua user. Printer virtual (Microsoft Print to PDF, XPS, Fax, OneNote) tidak pernah dipilih otomatis.
 
 ---
 

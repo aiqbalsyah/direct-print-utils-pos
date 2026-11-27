@@ -9,163 +9,77 @@ on:
                 default: false
                 type: boolean
             version:
-                description: "Version number (e.g., 1.0.0) - required if creating release"
+                description: "Version number (e.g., 1.0.0) - defaults to package.json version; required if creating release"
                 required: false
                 default: ""
                 type: string
+
+env:
+    # Windows Service Wrapper: runs the pkg console exe as a real Windows service
+    WINSW_URL: https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe
 
 jobs:
     build-msi:
         runs-on: windows-latest
         name: Build Windows MSI Installer
-        permissions:
-            contents: write  # Required for creating tags and releases
 
         steps:
-            - name: Checkout code
-              uses: actions/checkout@v4
-              with:
-                  fetch-depth: 0  # Fetch all history for tagging
-                  persist-credentials: true
+            - uses: actions/checkout@v4
 
-            - name: Setup Node.js 20
-              uses: actions/setup-node@v4
+            - uses: actions/setup-node@v4
               with:
                   node-version: "20"
+                  cache: npm
 
             - name: Setup WiX Toolset
-              run: |
-                  echo "Installing WiX Toolset..."
-                  choco install wixtoolset -y
-                  echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" >> $GITHUB_PATH
+              run: choco install wixtoolset -y --no-progress
               shell: pwsh
 
-            - name: Install dependencies
+            - name: Resolve version
+              id: ver
+              shell: pwsh
               run: |
-                  echo "Installing dependencies..."
-                  npm install
-              shell: cmd
+                  $v = "${{ inputs.version }}"
+                  if (-not $v) { $v = (Get-Content package.json | ConvertFrom-Json).version }
+                  $v = $v.TrimStart('v')
+                  "version=$v" >> $env:GITHUB_OUTPUT
 
-            - name: Install pkg globally
+            - name: Build executable
+              shell: cmd
               run: |
-                  echo "Installing @yao-pkg/pkg for Node 20 support..."
-                  npm install -g @yao-pkg/pkg
-              shell: cmd
+                  call npm ci || call npm install
+                  call npx --yes @yao-pkg/pkg . --targets node20-win-x64 --output dist\direct-print-win.exe
+                  if not exist dist\direct-print-win.exe exit /b 1
 
-            - name: Build using existing script
+            - name: Prepare installer files
+              shell: pwsh
               run: |
-                  echo "Building with build-complete.bat..."
-                  set CI=true
-                  call build-complete.bat
-              shell: cmd
+                  New-Item -ItemType Directory -Force installer\bin, installer\resources | Out-Null
+                  Copy-Item dist\direct-print-win.exe installer\bin\DirectPrintServer.exe
+                  Copy-Item public\logo.ico installer\resources\app.ico
+                  Copy-Item public\banner.bmp installer\resources\banner.bmp
+                  Copy-Item -Recurse scripts\windows installer\scripts
 
-            - name: Debug build output
-              run: |
-                  echo "Checking what was built..."
-                  echo "Contents of dist folder:"
-                  dir dist
-                  echo "✅ Found direct-print-win.exe - build successful!"
+                  Invoke-WebRequest $env:WINSW_URL -OutFile installer\bin\DirectPrintService.exe
+                  Write-Host "WinSW SHA256: $((Get-FileHash installer\bin\DirectPrintService.exe).Hash)"
+                  Copy-Item scripts\windows\service\DirectPrintService.xml installer\bin\DirectPrintService.xml
 
-                  echo "Checking scripts folder structure:"
-                  if exist "scripts" (
-                    dir scripts
-                    if exist "scripts\windows" (
-                      echo "✅ scripts\windows exists"
-                      dir scripts\windows
-                    ) else (
-                      echo "❌ scripts\windows not found"
-                    )
-                  ) else (
-                    echo "❌ scripts folder not found"
-                  )
-              shell: cmd
-
-            - name: Prepare MSI structure
-              run: |
-                  echo "Preparing files for MSI creation..."
-                  if not exist "installer" mkdir installer
-                  if not exist "installer\bin" mkdir installer\bin
-                  if not exist "installer\scripts" mkdir installer\scripts
-                  if not exist "installer\resources" mkdir installer\resources
-
-                  echo "Copying executable..."
-                  copy "dist\direct-print-win.exe" "installer\bin\DirectPrintServer.exe"
-                  if %ERRORLEVEL% NEQ 0 (
-                    echo "❌ Failed to copy executable"
-                    exit /b 1
-                  )
-                  echo "✅ Executable copied successfully"
-
-                  echo "Copying logo, icon, and banner images..."
-                  if exist "public\logo.bmp" (
-                    copy "public\logo.bmp" "installer\resources\logo.bmp"
-                    if %ERRORLEVEL% EQU 0 (
-                      echo "✅ Logo BMP copied successfully"
-                    ) else (
-                      echo "⚠️ Logo BMP copy failed, continuing..."
-                    )
-                  ) else (
-                    echo "⚠️ Logo.bmp not found, continuing..."
-                  )
-
-                  if exist "public\logo.ico" (
-                    copy "public\logo.ico" "installer\resources\app.ico"
-                    if %ERRORLEVEL% EQU 0 (
-                      echo "✅ Application icon (ICO) copied successfully"
-                    ) else (
-                      echo "⚠️ Icon copy failed, continuing without icon..."
-                    )
-                  ) else (
-                    echo "⚠️ Logo.ico not found, continuing without icon..."
-                  )
-
-                  if exist "public\banner.bmp" (
-                    copy "public\banner.bmp" "installer\resources\banner.bmp"
-                    if %ERRORLEVEL% EQU 0 (
-                      echo "✅ Banner image copied successfully"
-                    ) else (
-                      echo "⚠️ Banner copy failed, continuing without banner..."
-                    )
-                  ) else (
-                    echo "⚠️ Banner.bmp not found, continuing without banner..."
-                  )
-
-                  echo "Copying scripts..."
-                  if exist "scripts\windows" (
-                    xcopy /E /I /Y "scripts\windows" "installer\scripts"
-                    if %ERRORLEVEL% NEQ 0 (
-                      echo "❌ Failed to copy scripts"
-                      exit /b 1
-                    )
-                    echo "✅ Scripts copied successfully"
-                  ) else (
-                    echo "⚠️ No scripts\windows folder found, continuing..."
-                  )
-
-                  echo "Verifying installer structure:"
-                  dir installer\bin
-                  if exist "installer\scripts" dir installer\scripts
-                  if exist "installer\resources" dir installer\resources
-
-                  echo "✅ MSI structure prepared"
-              shell: cmd
+                  '{\rtf1\ansi\deff0 {\fonttbl {\f0 Times New Roman;}} \f0\fs24 Direct Print Server License Agreement\par\par This software is provided as-is for printer management.\par }' | Out-File -Encoding ascii license.rtf
 
             - name: Create WiX configuration
+              shell: pwsh
               run: |
-                  $wixContent = @'
+                  @'
                   <?xml version="1.0" encoding="UTF-8"?>
                   <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-                    <Product Id="*" Name="Direct Print Server" Language="1033" Version="1.0.0"
+                    <Product Id="*" Name="Direct Print Server" Language="1033" Version="$(var.ProductVersion)"
                              Manufacturer="Direct Print Solutions" UpgradeCode="12345678-1234-5678-9012-123456789012">
 
                       <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" InstallPrivileges="elevated"
-                               Comments="Administrator privileges required for Windows Service installation"
-                               Description="Direct Print Server - Requires Administrator" />
-                      <MajorUpgrade DowngradeErrorMessage="A newer version is already installed."
-                                    AllowSameVersionUpgrades="yes" />
+                               Description="Direct Print Server" />
+                      <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." AllowSameVersionUpgrades="yes" />
                       <MediaTemplate EmbedCab="yes" />
 
-                      <!-- Add application icon -->
                       <Icon Id="AppIcon" SourceFile="installer\resources\app.ico" />
                       <Property Id="ARPPRODUCTICON" Value="AppIcon" />
 
@@ -176,7 +90,7 @@ jobs:
                       </Feature>
 
                       <Directory Id="TARGETDIR" Name="SourceDir">
-                        <Directory Id="ProgramFilesFolder">
+                        <Directory Id="ProgramFiles64Folder">
                           <Directory Id="INSTALLFOLDER" Name="DirectPrintServer" />
                         </Directory>
                         <Directory Id="ProgramMenuFolder">
@@ -185,24 +99,21 @@ jobs:
                       </Directory>
 
                       <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
-                        <Component Id="MainExecutable" Guid="11111111-1111-1111-1111-111111111111">
+                        <Component Id="MainExecutable" Guid="11111111-1111-1111-1111-111111111111" Win64="yes">
                           <File Id="DirectPrintServerEXE" Source="installer\bin\DirectPrintServer.exe" KeyPath="yes" />
                         </Component>
 
-                        <Component Id="ServiceScripts" Guid="22222222-2222-2222-2222-222222222222">
-                          <File Id="InstallServiceJS" Source="installer\scripts\service\install-service.js" />
-                          <File Id="UninstallServiceJS" Source="installer\scripts\service\uninstall-service.js" />
+                        <!-- Windows service (WinSW wrapper -> DirectPrintServer.exe), auto-start, restart on crash -->
+                        <Component Id="ServiceWrapper" Guid="77777777-7777-7777-7777-777777777777" Win64="yes">
+                          <File Id="ServiceWrapperEXE" Source="installer\bin\DirectPrintService.exe" KeyPath="yes" />
+                          <File Id="ServiceWrapperXML" Source="installer\bin\DirectPrintService.xml" />
+                          <ServiceInstall Id="DPSServiceInstall" Name="DirectPrintServer" DisplayName="Direct Print Server"
+                                          Description="Thermal printer service for POS (http://localhost:4000)"
+                                          Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem" Vital="yes" />
+                          <ServiceControl Id="DPSServiceControl" Name="DirectPrintServer" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
                         </Component>
 
-                        <Component Id="StartupScripts" Guid="33333333-3333-3333-3333-333333333333">
-                          <File Id="StartupBat" Source="installer\scripts\startup\startup.bat" />
-                          <File Id="InstallStartupBat" Source="installer\scripts\startup\install-startup.bat" />
-                          <File Id="UninstallStartupBat" Source="installer\scripts\startup\uninstall-startup.bat" />
-                        </Component>
-
-                        <Component Id="WixScripts" Guid="44444444-4444-4444-4444-444444444444">
-                          <File Id="PreInstallBat" Source="installer\scripts\wix\pre-install.bat" />
-                          <File Id="PostInstallBat" Source="installer\scripts\wix\post-install.bat" />
+                        <Component Id="WixScripts" Guid="44444444-4444-4444-4444-444444444444" Win64="yes">
                           <File Id="PreUninstallBat" Source="installer\scripts\wix\pre-uninstall.bat" KeyPath="yes" />
                           <RemoveFolder Id="INSTALLFOLDER" Directory="INSTALLFOLDER" On="uninstall" />
                         </Component>
@@ -210,290 +121,124 @@ jobs:
 
                       <ComponentGroup Id="StartMenuComponents" Directory="ApplicationProgramsFolder">
                         <Component Id="StartMenuShortcut" Guid="66666666-6666-6666-6666-666666666666">
-                          <Shortcut Id="ApplicationStartMenuShortcut"
-                                    Name="Direct Print Server"
-                                    Description="Direct Print Server - Thermal Printer Service"
-                                    Target="[INSTALLFOLDER]DirectPrintServer.exe"
-                                    Icon="AppIcon"
-                                    WorkingDirectory="INSTALLFOLDER" />
+                          <!-- Opens the status page; the server itself runs as a service -->
+                          <Shortcut Id="StatusPageShortcut" Name="Direct Print Server"
+                                    Description="Status Direct Print Server (http://localhost:4000)"
+                                    Target="[WindowsFolder]explorer.exe" Arguments="http://localhost:4000/html/index.html"
+                                    Icon="AppIcon" />
                           <RemoveFolder Id="CleanUpShortcut" Directory="ApplicationProgramsFolder" On="uninstall" />
                           <RegistryValue Root="HKCU" Key="SOFTWARE\DirectPrintServer" Name="startmenu" Type="integer" Value="1" KeyPath="yes" />
                         </Component>
                       </ComponentGroup>
 
-                      <!-- Registry entries for tracking installation -->
                       <DirectoryRef Id="TARGETDIR">
                         <Component Id="RegistryEntries" Guid="55555555-5555-5555-5555-555555555555">
                           <RegistryKey Root="HKLM" Key="SOFTWARE\DirectPrintServer">
                             <RegistryValue Type="string" Name="InstallPath" Value="[INSTALLFOLDER]" KeyPath="yes" />
-                            <RegistryValue Type="string" Name="Version" Value="1.0.0" />
-                            <RegistryValue Type="integer" Name="Installed" Value="1" />
+                            <RegistryValue Type="string" Name="Version" Value="$(var.ProductVersion)" />
                           </RegistryKey>
                         </Component>
                       </DirectoryRef>
-                      
+
                       <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
                       <UIRef Id="WixUI_InstallDir" />
                       <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
-
-                      <!-- Add custom banner image (493 x 58 pixels) -->
                       <WixVariable Id="WixUIBannerBmp" Value="installer\resources\banner.bmp" />
 
-                      <!-- Custom Actions for Install/Uninstall Scripts -->
-                      <!-- Set custom action data to pass INSTALLFOLDER to commit action -->
-                      <CustomAction Id="SetPostInstallData"
-                                    Property="RunPostInstall"
-                                    Value="INSTALLFOLDER=[INSTALLFOLDER]"
-                                    Execute="immediate" />
+                      <!-- Before installing: stop a manually started DirectPrintServer.exe (older versions) so port 4000 is free -->
+                      <CustomAction Id="KillManualExe" Directory="TARGETDIR" Execute="deferred" Impersonate="no" Return="ignore"
+                                    ExeCommand="[SystemFolder]taskkill.exe /F /IM DirectPrintServer.exe /IM direct-print-win.exe" />
 
-                      <CustomAction Id="RunPostInstall"
-                                    FileKey="PostInstallBat"
-                                    ExeCommand=""
-                                    Execute="commit"
-                                    Impersonate="no"
-                                    Return="ignore" />
-
-                      <CustomAction Id="SetPreUninstallData"
-                                    Property="RunPreUninstall"
-                                    Value="INSTALLFOLDER=[INSTALLFOLDER]"
-                                    Execute="immediate" />
-
-                      <CustomAction Id="RunPreUninstall"
-                                    FileKey="PreUninstallBat"
-                                    ExeCommand=""
-                                    Execute="deferred"
-                                    Impersonate="no"
-                                    Return="ignore" />
-
-                      <!-- Custom Action to open browser after installation -->
-                      <CustomAction Id="OpenBrowserAction"
-                                    Directory="INSTALLFOLDER"
-                                    ExeCommand="cmd.exe /c timeout /t 3 /nobreak >nul &amp;&amp; start http://localhost:4000/index.html"
-                                    Execute="immediate"
-                                    Impersonate="yes"
-                                    Return="asyncNoWait" />
-
-                      <!-- Property to launch browser - disabled for manual startup -->
-                      <!-- <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open Direct Print Server in browser" /> -->
-                      <!-- <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" /> -->
+                      <!-- On uninstall: remove legacy services / startup entries from older versions -->
+                      <CustomAction Id="SetPreUninstallData" Property="RunPreUninstall" Value="INSTALLFOLDER=[INSTALLFOLDER]" Execute="immediate" />
+                      <CustomAction Id="RunPreUninstall" FileKey="PreUninstallBat" ExeCommand="" Execute="deferred" Impersonate="no" Return="ignore" />
 
                       <InstallExecuteSequence>
-                        <!-- Post-install script disabled - manual startup preferred -->
-                        <!-- <Custom Action="SetPostInstallData" After="InstallFiles">NOT Installed AND NOT REMOVE</Custom> -->
-                        <!-- <Custom Action="RunPostInstall" Before="InstallFinalize">NOT Installed AND NOT REMOVE</Custom> -->
-
-                        <!-- Set data for pre-uninstall script (must run before deferred action) -->
+                        <Custom Action="KillManualExe" Before="InstallServices">NOT REMOVE~="ALL"</Custom>
                         <Custom Action="SetPreUninstallData" Before="RunPreUninstall">REMOVE~="ALL"</Custom>
-
-                        <!-- Run pre-uninstall script before RemoveFiles during uninstall -->
-                        <Custom Action="RunPreUninstall" Before="RemoveFiles">REMOVE~="ALL"</Custom>
-
-                        <!-- Browser auto-open disabled - manual startup preferred -->
-                        <!-- <Custom Action="OpenBrowserAction" After="InstallFinalize">
-                          NOT Installed AND NOT REMOVE AND WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1
-                        </Custom> -->
+                        <Custom Action="RunPreUninstall" After="StopServices">REMOVE~="ALL"</Custom>
                       </InstallExecuteSequence>
 
-                      <!-- Check for admin privileges and show friendly error -->
-                      <Condition Message="ADMINISTRATOR PRIVILEGES REQUIRED - Please right-click the MSI file and select 'Run as administrator'. This installer needs admin privileges to install to Program Files and configure Windows system settings.">
+                      <Condition Message="ADMINISTRATOR PRIVILEGES REQUIRED - Please right-click the MSI file and select 'Run as administrator'.">
                         Privileged
                       </Condition>
-
                     </Product>
                   </Wix>
-                  '@
-                  $wixContent | Out-File -FilePath "DirectPrintServer.wxs" -Encoding utf8
-              shell: pwsh
-
-            - name: Create license file
-              run: |
-                  echo "{\rtf1\ansi\deff0 {\fonttbl {\f0 Times New Roman;}} \f0\fs24 Direct Print Server License Agreement\par\par This software is provided as-is for printer management.\par }" > license.rtf
-              shell: cmd
-
-            - name: Create application manifest for UAC elevation
-              run: |
-                  $manifestContent = @'
-                  <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-                  <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-                    <assemblyIdentity version="1.0.0.0" processorArchitecture="*" name="DirectPrintServer" type="win32" />
-                    <description>Direct Print Server - Thermal Printer Service</description>
-                    <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
-                      <security>
-                        <requestedPrivileges>
-                          <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
-                        </requestedPrivileges>
-                      </security>
-                    </trustInfo>
-                    <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
-                      <application>
-                        <!-- Windows 10 and Windows 11 -->
-                        <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
-                        <!-- Windows 8.1 -->
-                        <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
-                        <!-- Windows 8 -->
-                        <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>
-                        <!-- Windows 7 -->
-                        <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}"/>
-                      </application>
-                    </compatibility>
-                  </assembly>
-                  '@
-                  $manifestContent | Out-File -FilePath "DirectPrintServer.manifest" -Encoding utf8
-                  Write-Host "✅ Application manifest created (forces UAC elevation)"
-              shell: pwsh
+                  '@ | Out-File -FilePath DirectPrintServer.wxs -Encoding utf8
 
             - name: Build MSI with WiX
-              run: |
-                  echo "Compiling WiX..."
-                  candle DirectPrintServer.wxs -out DirectPrintServer.wixobj
-                  echo "Linking MSI..."
-                  light DirectPrintServer.wixobj -out DirectPrintServer.msi -ext WixUIExtension
-
-                  echo "Embedding manifest into MSI to force UAC elevation..."
-                  REM The manifest will be referenced in the MSI to ensure UAC prompt
-                  if exist "DirectPrintServer.manifest" (
-                    echo ✅ Manifest file ready for MSI package
-                  )
               shell: cmd
-
-            - name: Sign MSI (if certificate available)
               run: |
-                  echo "Checking for certificate..."
-                  if defined CERTIFICATE_BASE64 (
-                    echo "Certificate found, signing MSI..."
-                    echo "MSI signing implemented"
-                  ) else (
-                    echo "No certificate available, skipping signing"
-                  )
-              shell: cmd
-              env:
-                  CERTIFICATE_BASE64: ${{ secrets.CERTIFICATE_BASE64 }}
+                  candle -arch x64 -dProductVersion=${{ steps.ver.outputs.version }} DirectPrintServer.wxs -out DirectPrintServer.wixobj || exit /b 1
+                  light DirectPrintServer.wixobj -out DirectPrintServer.msi -ext WixUIExtension || exit /b 1
 
-            - name: Test MSI
+            - name: Smoke test (install, service running, HTTP, uninstall)
+              shell: pwsh
               run: |
-                  echo "Testing MSI file..."
-                  if exist "DirectPrintServer.msi" (
-                    echo "✅ MSI created successfully"
-                    for %%I in (DirectPrintServer.msi) do echo "MSI size: %%~zI bytes"
-                  ) else (
-                    echo "❌ MSI creation failed"
-                    exit 1
-                  )
-              shell: cmd
+                  $p = Start-Process msiexec -ArgumentList '/i', 'DirectPrintServer.msi', '/qn', '/l*v', 'install.log' -Wait -PassThru
+                  if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 80; throw "install failed: $($p.ExitCode)" }
 
-            - name: Create release package
+                  $svc = Get-Service DirectPrintServer
+                  Write-Host "Service: $($svc.Status) / $($svc.StartType)"
+                  if ($svc.Status -ne 'Running' -or $svc.StartType -ne 'Automatic') { throw "service not running/automatic" }
+
+                  $ok = $false
+                  foreach ($i in 1..30) {
+                    try { $r = Invoke-RestMethod http://localhost:4000/printers; $ok = $true; break } catch { Start-Sleep 1 }
+                  }
+                  if (-not $ok) { Get-Content "C:\Program Files\DirectPrintServer\logs\*" -ErrorAction SilentlyContinue; throw "HTTP not reachable" }
+                  Write-Host "Printers: $($r.printers -join ', ') | default: $($r.defaultPrinter)"
+                  Get-ChildItem "C:\Program Files\DirectPrintServer\logs"
+
+                  $p = Start-Process msiexec -ArgumentList '/x', 'DirectPrintServer.msi', '/qn' -Wait -PassThru
+                  if ($p.ExitCode -ne 0) { throw "uninstall failed: $($p.ExitCode)" }
+                  if (Get-Service DirectPrintServer -ErrorAction SilentlyContinue) { throw "service still present after uninstall" }
+                  Write-Host "Uninstall OK"
+
+            - name: Rename for release
+              shell: cmd
               run: |
                   mkdir release
+                  copy DirectPrintServer.msi "release\Direct-Print-Server-v${{ steps.ver.outputs.version }}-windows.msi"
 
-                  REM Create filename with version
-                  set VERSION=${{ inputs.version }}
-                  if "%VERSION%"=="" set VERSION=latest
-
-                  copy DirectPrintServer.msi "release\Direct-Print-Server-v%VERSION%-windows.msi"
-
-                  echo "Copying organized scripts..."
-                  xcopy /E /I /Y installer\scripts release\scripts\
-
-                  echo ========================================= > release\README.txt
-                  echo   Direct Print Server - Windows MSI >> release\README.txt
-                  echo ========================================= >> release\README.txt
-                  echo. >> release\README.txt
-                  echo ⚠️  IMPORTANT: ADMINISTRATOR PRIVILEGES REQUIRED >> release\README.txt
-                  echo. >> release\README.txt
-                  echo Installation Instructions: >> release\README.txt
-                  echo. >> release\README.txt
-                  echo 1. RIGHT-CLICK on DirectPrintServer.msi >> release\README.txt
-                  echo 2. Select "Run as administrator" >> release\README.txt
-                  echo 3. Click "Yes" on UAC prompt >> release\README.txt
-                  echo 4. Follow the installation wizard >> release\README.txt
-                  echo 5. Service will auto-start on Windows boot >> release\README.txt
-                  echo 6. Server available at http://localhost:4000 >> release\README.txt
-                  echo. >> release\README.txt
-                  echo ⚠️  If you double-click without "Run as administrator": >> release\README.txt
-                  echo    - You will see a privilege error during installation >> release\README.txt
-                  echo    - Installation will fail or be incomplete >> release\README.txt
-                  echo    - You MUST use "Run as administrator" >> release\README.txt
-                  echo. >> release\README.txt
-                  echo Features: >> release\README.txt
-                  echo - Windows Service integration >> release\README.txt
-                  echo - Auto-startup on boot >> release\README.txt
-                  echo - Professional Windows installer >> release\README.txt
-                  echo - Easy uninstallation >> release\README.txt
-              shell: cmd
-
-            - name: Upload MSI artifact
-              uses: actions/upload-artifact@v4
+            - uses: actions/upload-artifact@v4
               with:
-                  name: direct-print-msi-${{ github.sha }}
+                  name: direct-print-msi
                   path: release/
                   retention-days: 90
 
-            - name: Create and push git tag
-              if: ${{ inputs.create_release == true && inputs.version != '' }}
-              run: |
-                  echo "Checking if tag v${{ inputs.version }} exists..."
-
-                  if git rev-parse "v${{ inputs.version }}" >/dev/null 2>&1; then
-                      echo "✅ Tag v${{ inputs.version }} already exists, skipping tag creation"
-                  else
-                      echo "Creating git tag v${{ inputs.version }}"
-                      git config user.name "github-actions[bot]"
-                      git config user.email "github-actions[bot]@users.noreply.github.com"
-                      git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
-                      git push origin "v${{ inputs.version }}"
-                      echo "✅ Tag v${{ inputs.version }} created and pushed"
-                  fi
-              shell: bash
-
-            - name: Create Release
-              if: ${{ inputs.create_release == true && inputs.version != '' }}
-              uses: softprops/action-gh-release@v1
+    release:
+        needs: build-msi
+        if: ${{ inputs.create_release == true && inputs.version != '' }}
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/download-artifact@v4
               with:
-                  files: |
-                      release/Direct-Print-Server-v${{ inputs.version }}-windows.msi
-                      release/scripts/**/*
-                  name: Direct Print Server v${{ inputs.version }}
+                  name: direct-print-msi
+                  path: release
+
+            - name: Create or update release
+              uses: softprops/action-gh-release@v2
+              with:
                   tag_name: v${{ inputs.version }}
+                  name: Direct Print Server v${{ inputs.version }}
+                  target_commitish: ${{ github.sha }}
+                  files: release/*.msi
+                  append_body: true
                   body: |
-                      ## 🖨️ Direct Print Server - Windows MSI Installer
-
-                      ### ✅ Professional Windows Installation:
-                      - **MSI Installer** - Standard Windows installation experience
-                      - **Windows Service** - Runs as system service
-                      - **Auto-Startup** - Automatically starts on Windows boot
-                      - **Add/Remove Programs** - Proper Windows integration
-                      - **No Dependencies** - Self-contained installation
-
-                      ### 🚀 Features:
-                      - **System Printer Support** - Works with any Windows printer
-                      - **Automatic Detection** - Finds and uses default printer
-                      - **UMUM Support** - Handles "UMUM" printer type
-                      - **Background Service** - Runs silently in background
-                      - **Web Interface** - Available at http://localhost:4000
-
-                      ### 📦 Installation:
-
-                      **⚠️ IMPORTANT: Administrator Privileges Required!**
+                      ## 🪟 Windows
 
                       1. Download `Direct-Print-Server-v${{ inputs.version }}-windows.msi`
-                      2. **RIGHT-CLICK** on the MSI file
-                      3. Select **"Run as administrator"**
-                      4. Click **"Yes"** on UAC prompt
-                      5. Follow installation wizard
-                      6. Service automatically starts
-                      7. Server ready at `http://localhost:4000`
+                      2. Klik kanan → **Run as administrator** → ikuti wizard
+                      3. Selesai. Server jalan sebagai **Windows Service** `DirectPrintServer` (otomatis saat boot, restart sendiri kalau crash) → http://localhost:4000
 
-                      **❌ DO NOT just double-click the MSI!** You will get a privileges error.
-                      **✅ ALWAYS use "Run as administrator"**
+                      Tidak perlu membuka aplikasi apa pun. Versi lama ter-upgrade otomatis.
 
-                      ### 🔧 Uninstallation:
-                      - Use Windows "Add or Remove Programs"
-                      - Or run: `msiexec /uninstall Direct-Print-Server-v${{ inputs.version }}-windows.msi`
-
-                      ### 💡 Perfect for enterprise deployment!
-                      This MSI installer provides professional Windows integration with
-                      proper service management and easy deployment via Group Policy.
-                  draft: false
-                  prerelease: false
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                      | | |
+                      |---|---|
+                      | Status | `sc query DirectPrintServer` atau `services.msc` |
+                      | Restart | `sc stop DirectPrintServer` lalu `sc start DirectPrintServer` |
+                      | Log | `C:\Program Files\DirectPrintServer\logs\` |
+                      | Uninstall | Settings → Apps → Direct Print Server |
